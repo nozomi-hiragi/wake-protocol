@@ -82,6 +82,14 @@ export function lp(...fields: Uint8Array[]): Bytes {
   return concat(...parts);
 }
 
+/** Returns the end of one checked LP field, leaving slicing to the caller. */
+function lpFieldEnd(buf: Uint8Array, view: DataView, offset: number): number {
+  if (offset + 4 > buf.length) fail("bad_request", "truncated LP length");
+  const end = offset + 4 + view.getUint32(offset);
+  if (end > buf.length) fail("bad_request", "truncated LP field");
+  return end;
+}
+
 /**
  * Strict LP decoding. `lengths` fixes the field count; a number entry
  * requires that exact length, `null` allows any length.
@@ -91,13 +99,12 @@ export function lpDecode(buf: Uint8Array, lengths: readonly (number | null)[]): 
   const out: Bytes[] = [];
   let o = 0;
   for (const want of lengths) {
-    if (o + 4 > buf.length) fail("bad_request", "truncated LP length");
-    const len = view.getUint32(o);
-    o += 4;
-    if (o + len > buf.length) fail("bad_request", "truncated LP field");
+    const start = o + 4;
+    const end = lpFieldEnd(buf, view, o);
+    const len = end - start;
     if (want !== null && len !== want) fail("bad_request", `LP field length ${len}, want ${want}`);
-    out.push(buf.slice(o, o + len));
-    o += len;
+    out.push(buf.slice(start, end));
+    o = end;
   }
   if (o !== buf.length) fail("bad_request", "trailing bytes after LP");
   return out;
@@ -109,12 +116,10 @@ export function lpDecodeAll(buf: Uint8Array): Bytes[] {
   const out: Bytes[] = [];
   let o = 0;
   while (o < buf.length) {
-    if (o + 4 > buf.length) fail("bad_request", "truncated LP length");
-    const len = view.getUint32(o);
-    o += 4;
-    if (o + len > buf.length) fail("bad_request", "truncated LP field");
-    out.push(buf.slice(o, o + len));
-    o += len;
+    const start = o + 4;
+    const end = lpFieldEnd(buf, view, o);
+    out.push(buf.slice(start, end));
+    o = end;
   }
   return out;
 }
