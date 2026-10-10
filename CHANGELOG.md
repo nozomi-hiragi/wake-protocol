@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.0 (2026-10-10)
+## v0.5.0（未リリース）
 
 - TypeScript の仮実装（暗号コア）を `impl/ts/` に追加
 - §16 のテストベクターを `spec/test-vectors/` に追加
