@@ -5,50 +5,62 @@
     {
       "name": "spec-10.3-example",
       "input": {
-        "content": "送金要求\n送金先: 山田太郎\n金額: 10000 JPY",
+        "content": "送金要求\\n送金先: 山田太郎\\n金額: 10000 JPY",
         "nonce": "3f9a1c7e5b2d4f6081a3c5e7092b4d6f"
       },
       "expected": {
-        "hashInput": "送金要求\n送金先: 山田太郎\n金額: 10000 JPY\nWAKE-TA-Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f",
-        "hashInputLength": 102,
-        "operationId": "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461"
+        "hashInput": "送金要求\\n送金先: 山田太郎\\n金額: 10000 JPY\nWAKE-TA-Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f",
+        "hashInputLength": 104,
+        "operationId": "1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74"
       }
     },
     {
       "name": "emoji-and-japanese",
       "input": {
-        "content": "承認をお願いします 👍🏽\n金額: 500 JPY",
+        "content": "承認をお願いします 👍🏽\\n金額: 500 JPY",
         "nonce": "66707e356f982360de73f318a91e3483"
       },
       "expected": {
-        "hashInput": "承認をお願いします 👍🏽\n金額: 500 JPY\nWAKE-TA-Nonce: 66707e356f982360de73f318a91e3483",
-        "hashInputLength": 100,
-        "operationId": "1989f96aad811f1a9c9c21a7dee86b86471dc8d10562f838c73fbbd1ea134cdc"
+        "hashInput": "承認をお願いします 👍🏽\\n金額: 500 JPY\nWAKE-TA-Nonce: 66707e356f982360de73f318a91e3483",
+        "hashInputLength": 101,
+        "operationId": "798a8aa6470e1e4d172784073f145c42c0a8a321b271a303cb0e4fda2fccea6c"
       }
     },
     {
       "name": "zwj-family-sequence",
       "input": {
-        "content": "家族への送金 👨‍👩‍👧\n金額: 3000 JPY",
+        "content": "家族への送金 👨‍👩‍👧\\n金額: 3000 JPY",
         "nonce": "75e11e8acc3eb3aa5f34c720679c76b0"
       },
       "expected": {
-        "hashInput": "家族への送金 👨‍👩‍👧\n金額: 3000 JPY\nWAKE-TA-Nonce: 75e11e8acc3eb3aa5f34c720679c76b0",
-        "hashInputLength": 102,
-        "operationId": "ae1b3f4de573bd4bbc4719fda0a2d3ab887443ca61c5cbe3cdc5bbe4998549df"
+        "hashInput": "家族への送金 👨‍👩‍👧\\n金額: 3000 JPY\nWAKE-TA-Nonce: 75e11e8acc3eb3aa5f34c720679c76b0",
+        "hashInputLength": 103,
+        "operationId": "7c03f5151c585618415c6c3350ba2298d3d119a95101a43ba7665cb4c3268abc"
+      }
+    },
+    {
+      "name": "bidi-and-zero-width-accepted",
+      "input": {
+        "content": "金額: 100‮0 JPY​",
+        "nonce": "66707e356f982360de73f318a91e3483"
+      },
+      "expected": {
+        "hashInput": "金額: 100‮0 JPY​\nWAKE-TA-Nonce: 66707e356f982360de73f318a91e3483",
+        "hashInputLength": 70,
+        "operationId": "4c2a2643ef4c0e1699807f03eb6018015bd2d37c22a0e90de9bb1b9411bfc045"
       }
     },
     {
       "name": "ta-binding",
       "input": {
         "approvalId": "66707e356f982360de73f318a91e3483",
-        "operationId": "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461",
+        "operationId": "1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74",
         "approvalNonce": "c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a0",
         "sessionId": "ca8bf24e74c35e22937af7defddae539c1187a6042d6a4be57ccedbc17f6aee8"
       },
       "expected": {
-        "encoded": "0000001157414b452f312074612d617070726f76650000001066707e356f982360de73f318a91e3483000000205f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b46100000020c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a000000020ca8bf24e74c35e22937af7defddae539c1187a6042d6a4be57ccedbc17f6aee8",
-        "ta": "230264254499278e96dd69648d3ffb88a610a22dde0b98bebdf8178043086bd0"
+        "encoded": "0000001157414b452f312074612d617070726f76650000001066707e356f982360de73f318a91e3483000000201140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd7400000020c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a000000020ca8bf24e74c35e22937af7defddae539c1187a6042d6a4be57ccedbc17f6aee8",
+        "ta": "f5730ac5995a3528042d184dfda5d00d90c24c656fb6937fe895a6bdb4e25120"
       }
     }
   ]

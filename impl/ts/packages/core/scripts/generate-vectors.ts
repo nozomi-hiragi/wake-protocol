@@ -51,7 +51,7 @@ const IV_C2S = "d7f3eaf80af8c74c3b50e6e3";
 const IV_S2C = "31f3b21c1fbf58b2549f4501";
 const APPROVAL_NONCE = "c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a0";
 /** The spec §10.3 example operationId, used as a raw 32-byte operationId. */
-const SPEC_OPERATION_ID = "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461";
+const SPEC_OPERATION_ID = "1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74";
 /** The spec §10.3 example TA Nonce. */
 const SPEC_TA_NONCE = "3f9a1c7e5b2d4f6081a3c5e7092b4d6f";
 
@@ -159,6 +159,13 @@ async function msgCases(): Promise<Case[]> {
     context: CONTEXT,
     iv: IV_C2S,
     plaintext: plainC2s,
+  });
+  // 17-byte plaintext, opened with maxPlaintext 16 (§8.7).
+  const longWire = await runCase("msg", {
+    kind: "seal",
+    key: MSG_KEY_C2S,
+    ...hdrInput(c2sHeader),
+    plaintext: "00".repeat(17),
   });
   const base = fromHex(baseWire.wire as string);
   const H = encodeHeader(c2sHeader);
@@ -269,6 +276,17 @@ async function msgCases(): Promise<Case[]> {
         expectDir: 1,
       },
       error: "bad_request",
+    },
+    {
+      name: "plaintext-over-limit",
+      input: {
+        kind: "open",
+        wire: longWire.wire as string,
+        key: MSG_KEY_C2S,
+        expectDir: 1,
+        maxPlaintext: 16,
+      },
+      error: "too_large",
     },
     {
       name: "dir-reversed-s2c-wire-to-c2s-receiver",
@@ -462,18 +480,22 @@ async function buildSuites(): Promise<SuiteFile[]> {
 
   cases.push(["msg", await msgCases()]);
 
-  const specContent = "送金要求\n送金先: 山田太郎\n金額: 10000 JPY";
+  const specContent = "送金要求\\n送金先: 山田太郎\\n金額: 10000 JPY";
   cases.push([
     "ta",
     [
       { name: "spec-10.3-example", input: { content: specContent, nonce: SPEC_TA_NONCE } },
       {
         name: "emoji-and-japanese",
-        input: { content: "承認をお願いします 👍🏽\n金額: 500 JPY", nonce: APPROVAL_ID },
+        input: { content: "承認をお願いします 👍🏽\\n金額: 500 JPY", nonce: APPROVAL_ID },
       },
       {
         name: "zwj-family-sequence",
-        input: { content: "家族への送金 👨‍👩‍👧\n金額: 3000 JPY", nonce: REQUEST_ID },
+        input: { content: "家族への送金 👨‍👩‍👧\\n金額: 3000 JPY", nonce: REQUEST_ID },
+      },
+      {
+        name: "bidi-and-zero-width-accepted",
+        input: { content: "金額: 100\u202e0 JPY\u200b", nonce: APPROVAL_ID },
       },
       {
         name: "ta-binding",
@@ -490,17 +512,23 @@ async function buildSuites(): Promise<SuiteFile[]> {
   cases.push([
     "ta-profile",
     [
-      { name: "accepts-zwj-and-lf", input: { content: "家族 👨‍👩‍👧\n二行目" } },
+      { name: "accepts-zwj", input: { content: "家族 👨‍👩‍👧 二行目" } },
       { name: "accepts-zwnj", input: { content: "ژ‌ژ" } },
-      { name: "not-nfc", input: { content: "café" }, error: "invalid_content" },
+      { name: "accepts-literal-backslash-n", input: { content: "a\\nb" } },
+      { name: "accepts-bidi-rlo", input: { content: "abc\u202edef" } },
+      { name: "accepts-zero-width-space", input: { content: "a\u200bb" } },
+      { name: "accepts-line-separator", input: { content: "a\u2028b" } },
+      { name: "accepts-private-use", input: { content: "a\ue000b" } },
+      { name: "accepts-soft-hyphen", input: { content: "a\u00adb" } },
+      { name: "not-nfc", input: { content: "cafe\u0301" }, error: "invalid_content" },
+      { name: "contains-lf", input: { content: "a\nb" }, error: "invalid_content" },
       { name: "contains-cr", input: { content: "a\rb" }, error: "invalid_content" },
       { name: "contains-tab", input: { content: "a\tb" }, error: "invalid_content" },
-      { name: "bidi-rlo", input: { content: "abc‮def" }, error: "invalid_content" },
+      { name: "contains-del", input: { content: "a\u007fb" }, error: "invalid_content" },
+      { name: "contains-c1-control", input: { content: "a\u0085b" }, error: "invalid_content" },
+      { name: "leading-space", input: { content: " abc" }, error: "invalid_content" },
       { name: "trailing-space", input: { content: "abc " }, error: "invalid_content" },
-      { name: "trailing-lf", input: { content: "abc\n" }, error: "invalid_content" },
-      { name: "space-before-lf", input: { content: "abc \ndef" }, error: "invalid_content" },
-      { name: "trailing-ideographic-space", input: { content: "abc　" }, error: "invalid_content" },
-      { name: "line-separator", input: { content: "a b" }, error: "invalid_content" },
+      { name: "trailing-ideographic-space", input: { content: "abc\u3000" }, error: "invalid_content" },
       { name: "empty", input: { content: "" }, error: "invalid_content" },
     ],
   ]);
@@ -616,9 +644,74 @@ async function buildSuites(): Promise<SuiteFile[]> {
         error: "invalid_path",
       },
       {
-        name: "request-path-under-wake",
+        name: "request-path-under-wake-is-dispatchers-job",
         input: { kind: "request", method: "GET", path: "/wake/x", query: "", headers: [], body: "" },
-        error: "invalid_path",
+      },
+      {
+        name: "request-query-lowercase-percent",
+        input: { kind: "request", method: "GET", path: "/api", query: "q=%e3%81%82", headers: [], body: "" },
+      },
+      {
+        name: "request-duplicate-accept-keeps-order",
+        input: {
+          kind: "request",
+          method: "GET",
+          path: "/api",
+          query: "",
+          headers: [
+            ["accept", "text/html"],
+            ["accept", "application/json"],
+          ],
+          body: "",
+        },
+      },
+      {
+        name: "request-duplicate-content-type",
+        input: {
+          kind: "request",
+          method: "POST",
+          path: "/api",
+          query: "",
+          headers: [
+            ["content-type", "text/plain"],
+            ["content-type", "application/json"],
+          ],
+          body: "",
+        },
+        error: "invalid_header",
+      },
+      {
+        name: "response-duplicate-content-type",
+        input: {
+          kind: "response",
+          status: 200,
+          headers: [
+            ["content-type", "text/plain"],
+            ["content-type", "application/json"],
+          ],
+          body: "",
+        },
+        error: "invalid_header",
+      },
+      {
+        name: "response-location-protocol-relative",
+        input: { kind: "response", status: 302, headers: [["location", "//evil.example/x"]], body: "" },
+        error: "invalid_header",
+      },
+      {
+        name: "response-location-absolute-url",
+        input: { kind: "response", status: 302, headers: [["location", "https://evil.example/"]], body: "" },
+        error: "invalid_header",
+      },
+      {
+        name: "response-location-backslash",
+        input: { kind: "response", status: 302, headers: [["location", "/\\evil.example"]], body: "" },
+        error: "invalid_header",
+      },
+      {
+        name: "response-location-bare-relative",
+        input: { kind: "response", status: 302, headers: [["location", "x/y"]], body: "" },
+        error: "invalid_header",
       },
       {
         name: "request-header-cookie",

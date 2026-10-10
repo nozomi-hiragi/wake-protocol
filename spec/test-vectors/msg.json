@@ -143,6 +143,17 @@
       "expectedError": "bad_request"
     },
     {
+      "name": "plaintext-over-limit",
+      "input": {
+        "kind": "open",
+        "wire": "000000850000000a57414b452f31206d73670000000101000000206ae5e6afe9ddf0f51e088a26d86e7ca5f3e3b2a916be67fd280f6a9e47450dcf00000004000000010000001075e11e8acc3eb3aa5f34c720679c76b0000000080000019b76daa80000000012504f5354202f6170692f7472616e736665720000000cd7f3eaf80af8c74c3b50e6e33af7395558a16bbd69ddd7539db9961e08fa773a53925b0730a50b67c0f6749ea1",
+        "key": "4a8a52c9f376ad121109a773c4b7cf7237dfacf95b06b21cd5e48dc3fb8c7585",
+        "expectDir": 1,
+        "maxPlaintext": 16
+      },
+      "expectedError": "too_large"
+    },
+    {
       "name": "dir-reversed-s2c-wire-to-c2s-receiver",
       "input": {
         "kind": "open",
