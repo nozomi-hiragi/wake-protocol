@@ -2,13 +2,14 @@
 // "@wake-protocol/core/testing" subpath, never from the main entry point.
 import { type Bytes, b64u, concat, u32 } from "./encoding.ts";
 import { aesGcmEncrypt } from "./crypto.ts";
-import { encodeHeader, type MsgHeader } from "./msg.ts";
+import { checkPlaintextLength, encodeHeader, type MsgHeader, type MsgOptions } from "./msg.ts";
 import type { EcPublicKey } from "./types.ts";
 
 const subtle = globalThis.crypto.subtle;
 
 /** Seal with a caller-chosen IV. Never use for real traffic (IV reuse breaks AES-GCM). */
-export async function sealWithIv(key: CryptoKey, h: MsgHeader, plaintext: Bytes): Promise<Bytes> {
+export async function sealWithIv(key: CryptoKey, h: MsgHeader, plaintext: Bytes, opts?: MsgOptions): Promise<Bytes> {
+  checkPlaintextLength(plaintext.length, opts);
   const H = encodeHeader(h);
   const C = await aesGcmEncrypt(key, h.iv, plaintext, H);
   return concat(u32(H.length), H, C);

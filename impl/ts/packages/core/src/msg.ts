@@ -27,6 +27,23 @@ const TAG_LEN = 16;
 const MIN_HEADER = 116;
 const MAX_HEADER = 371;
 
+/**
+ * Default plaintext limit (§8.7 MUST). The ET body limit (1 MiB, §11.2) plus
+ * room for the EtRequest framing (path, query, headers).
+ */
+export const DEFAULT_MAX_PLAINTEXT = 1024 * 1024 + 64 * 1024;
+
+export interface MsgOptions {
+  /** Maximum plaintext length in bytes. Defaults to DEFAULT_MAX_PLAINTEXT. */
+  maxPlaintext?: number;
+}
+
+/** Fails with `too_large` (§12.3) if the plaintext exceeds the limit. */
+export function checkPlaintextLength(length: number, opts?: MsgOptions): void {
+  const limit = opts?.maxPlaintext ?? DEFAULT_MAX_PLAINTEXT;
+  if (length > limit) fail("too_large", "plaintext length");
+}
+
 export interface MsgHeader {
   dir: typeof DIR_C2S | typeof DIR_S2C;
   sessionId: SessionId;
@@ -59,7 +76,7 @@ export interface ParsedWire {
   sealed: Bytes;
 }
 
-export function parseWire(wire: Uint8Array): ParsedWire {
+export function parseWire(wire: Uint8Array, opts?: MsgOptions): ParsedWire {
   if (wire.length < 4) fail("bad_request", "short wire");
   const hlen = new DataView(wire.buffer, wire.byteOffset, 4).getUint32(0);
   if (hlen < MIN_HEADER || hlen > MAX_HEADER) fail("bad_request", "header length");
@@ -71,6 +88,7 @@ export function parseWire(wire: Uint8Array): ParsedWire {
   if (dir !== DIR_C2S && dir !== DIR_S2C) fail("bad_request", "dir");
   const context = readAscii(f[6]!);
   checkContext(context);
+  checkPlaintextLength(wire.length - 4 - hlen - TAG_LEN, opts);
   return {
     header: {
       dir,
@@ -89,7 +107,8 @@ export function parseWire(wire: Uint8Array): ParsedWire {
 export type SealInput = Omit<MsgHeader, "iv">;
 
 /** §8.3 Seal. The IV is always generated here, never taken from the caller. */
-export async function seal(key: CryptoKey, h: SealInput, plaintext: Bytes): Promise<Bytes> {
+export async function seal(key: CryptoKey, h: SealInput, plaintext: Bytes, opts?: MsgOptions): Promise<Bytes> {
+  checkPlaintextLength(plaintext.length, opts);
   const iv = newIv();
   const header = encodeHeader({ ...h, iv });
   const C = await aesGcmEncrypt(key, iv, plaintext, header);
@@ -111,8 +130,13 @@ export async function openParsed(key: CryptoKey, p: ParsedWire): Promise<Bytes> 
  * lookup, epoch acceptance and freshness checks belong to the caller,
  * between parse and decrypt (§8.3).
  */
-export async function open(key: CryptoKey, wire: Uint8Array, expectDir: number): Promise<{ header: MsgHeader; plaintext: Bytes }> {
-  const p = parseWire(wire);
+export async function open(
+  key: CryptoKey,
+  wire: Uint8Array,
+  expectDir: number,
+  opts?: MsgOptions,
+): Promise<{ header: MsgHeader; plaintext: Bytes }> {
+  const p = parseWire(wire, opts);
   if (p.header.dir !== expectDir) fail("bad_request", "unexpected dir");
   return { header: p.header, plaintext: await openParsed(key, p) };
 }

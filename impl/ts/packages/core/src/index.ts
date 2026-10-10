@@ -123,8 +123,10 @@ export {
 } from "./kx.ts";
 export {
   type MsgHeader,
+  type MsgOptions,
   type ParsedWire,
   type SealInput,
+  DEFAULT_MAX_PLAINTEXT,
   DIR_C2S,
   DIR_S2C,
   checkContext,
