@@ -210,6 +210,9 @@ function latin1(b: Uint8Array): string {
 
 function checkBody(body: Uint8Array, opts: EtOptions): void {
   const limit = opts.bodyLimit ?? ET_BODY_MAX;
+  if (!(Number.isSafeInteger(limit) && limit >= 0)) {
+    fail("invalid_option", "bodyLimit must be a non-negative safe integer");
+  }
   if (body.length > limit) fail("too_large", "body too large");
 }
 

@@ -41,6 +41,9 @@ export interface MsgOptions {
 /** Fails with `too_large` (§12.3) if the plaintext exceeds the limit. */
 export function checkPlaintextLength(length: number, opts?: MsgOptions): void {
   const limit = opts?.maxPlaintext ?? DEFAULT_MAX_PLAINTEXT;
+  if (!(Number.isSafeInteger(limit) && limit >= 0)) {
+    fail("invalid_option", "maxPlaintext must be a non-negative safe integer");
+  }
   if (length > limit) fail("too_large", "plaintext length");
 }
 

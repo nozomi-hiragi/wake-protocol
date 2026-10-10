@@ -62,3 +62,24 @@ describe("plaintext length limit (§8.7)", () => {
     assert.equal((await open(k, wire, DIR_C2S, { maxPlaintext: 40 })).plaintext.length, 40);
   });
 });
+
+describe("maxPlaintext validation", () => {
+  for (const limit of [NaN, Infinity, -1, 1.5]) {
+    it(`seal and parseWire reject maxPlaintext ${limit} with invalid_option`, async () => {
+      const k = await key();
+      const wire = await seal(k, header(), new Uint8Array(4));
+      await expectCode(seal(k, header(), new Uint8Array(4), { maxPlaintext: limit }), "invalid_option");
+      assert.throws(
+        () => parseWire(wire, { maxPlaintext: limit }),
+        (e: unknown) => e instanceof WakeError && e.code === "invalid_option",
+      );
+    });
+  }
+
+  it("a limit of 0 accepts an empty plaintext", async () => {
+    const k = await key();
+    const opts = { maxPlaintext: 0 };
+    const wire = await seal(k, header(), new Uint8Array(0), opts);
+    assert.equal((await open(k, wire, DIR_C2S, opts)).plaintext.length, 0);
+  });
+});
