@@ -1,0 +1,28 @@
+name: 仕様の指摘
+description: 記述の誤り、矛盾、曖昧な点、足りない記述の指摘
+labels: ["spec"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 対象の版
+      description: 例「v0.4.0」
+    validations:
+      required: true
+  - type: input
+    id: section
+    attributes:
+      label: 該当する節
+      description: 例「§5.3」
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 問題点
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 修正案（任意）

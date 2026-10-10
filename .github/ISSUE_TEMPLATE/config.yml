@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 設計の議論・使い方の相談
+    url: https://github.com/nozomi-hiragi/wake-protocol/discussions
+    about: 仕様の背景や使い方の相談は Discussions へ
+  - name: 脆弱性の報告（非公開）
+    url: https://github.com/nozomi-hiragi/wake-protocol/security/advisories/new
+    about: プロトコル設計上の欠陥は公開Issueではなく、こちらから非公開で報告してください

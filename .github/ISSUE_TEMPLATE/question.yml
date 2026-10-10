@@ -1,0 +1,15 @@
+name: 質問
+description: 仕様の意味や意図についての質問
+labels: ["question"]
+body:
+  - type: input
+    id: section
+    attributes:
+      label: 該当する節
+      description: 例「§7.5」「§8.3」
+  - type: textarea
+    id: question
+    attributes:
+      label: 質問
+    validations:
+      required: true

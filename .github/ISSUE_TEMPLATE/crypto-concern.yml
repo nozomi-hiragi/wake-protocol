@@ -1,0 +1,25 @@
+name: 暗号上の懸念（公開してよいもの）
+description: 攻撃につながらない範囲の、設計や選択への懸念・レビュー
+labels: ["crypto"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **攻撃が成立しうる欠陥は、ここではなく [非公開の報告](https://github.com/nozomi-hiragi/wake-protocol/security/advisories/new) から送ってください。**
+  - type: input
+    id: section
+    attributes:
+      label: 該当する節
+    validations:
+      required: true
+  - type: textarea
+    id: concern
+    attributes:
+      label: 懸念の内容
+      description: 破られると考える性質（例: 鍵交換の認証、鮮度、操作承認）と、その理由
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: 参考資料（任意）
