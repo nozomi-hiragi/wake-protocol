@@ -1,0 +1,90 @@
+{
+  "wake": "WAKE/1",
+  "suite": "lp",
+  "vectors": [
+    {
+      "name": "empty-field",
+      "input": {
+        "fields": [
+          ""
+        ]
+      },
+      "expected": {
+        "encoded": "00000000"
+      }
+    },
+    {
+      "name": "spec-example-ab-empty",
+      "input": {
+        "fields": [
+          "6162",
+          ""
+        ]
+      },
+      "expected": {
+        "encoded": "00000002616200000000"
+      }
+    },
+    {
+      "name": "nested",
+      "input": {
+        "fields": [
+          "00000002616200000000",
+          "7a"
+        ]
+      },
+      "expected": {
+        "encoded": "0000000a00000002616200000000000000017a"
+      }
+    },
+    {
+      "name": "no-fields",
+      "input": {
+        "fields": []
+      },
+      "expected": {
+        "encoded": ""
+      }
+    },
+    {
+      "name": "u8-255",
+      "input": {
+        "kind": "u8",
+        "value": 255
+      },
+      "expected": {
+        "encoded": "ff"
+      }
+    },
+    {
+      "name": "u16-0x1234",
+      "input": {
+        "kind": "u16",
+        "value": 4660
+      },
+      "expected": {
+        "encoded": "1234"
+      }
+    },
+    {
+      "name": "u32-deadbeef",
+      "input": {
+        "kind": "u32",
+        "value": 3735928559
+      },
+      "expected": {
+        "encoded": "deadbeef"
+      }
+    },
+    {
+      "name": "u64-2pow53-minus-1",
+      "input": {
+        "kind": "u64",
+        "value": 9007199254740991
+      },
+      "expected": {
+        "encoded": "001fffffffffffff"
+      }
+    }
+  ]
+}

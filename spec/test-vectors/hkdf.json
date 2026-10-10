@@ -1,0 +1,32 @@
+{
+  "wake": "WAKE/1",
+  "suite": "hkdf",
+  "vectors": [
+    {
+      "name": "ordinary-ss",
+      "input": {
+        "ss": "759931c025a9690df5f8c194330fd1ceda28fb563844fc80b6636a3bf79b62df",
+        "th": "0768d3fdf020fd90c339fb19ce8e0507375ab33dd3cd1ac5a934322ec44f5c23"
+      },
+      "expected": {
+        "kC2s": "ad7e04109cab422877b0fef9716fca18c2eebc5dc489750a520ab864c89f41c9",
+        "kS2c": "4a25427884c307b843149b22d6c1de3dc86fa3a608f2a521d39a002be2aeb9a3",
+        "fkC": "400c4ee66bf95c1435923db453a51d2fb28dc183d8a74454d46b214fde5a51b3",
+        "fkS": "b77083eecce084f186a60d6a3749535a3ddd658e76dddca30d7127492a822785"
+      }
+    },
+    {
+      "name": "leading-zero-ss",
+      "input": {
+        "ss": "003353938717ba44c354a54a0f668a0d4b8a5295eb29a4180b2896111ccbb277",
+        "th": "bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b6143608"
+      },
+      "expected": {
+        "kC2s": "2c941b0167d97d8cd51e7b48fcd377d2759c8aa5ba95ec4978c538ac403ebf50",
+        "kS2c": "2b544e15309dccd81e7645b586eb78f64cca5ba0692b08c7629696f44a2ed768",
+        "fkC": "d8f8fd732a6f110f329b36be78613b148b96bebcbf0a0b824326a4f81d45ba81",
+        "fkS": "35fdc3b47405f53a590263872a3ccdfa0c50ae0611a919268a7d9a53ef68ce95"
+      }
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "wake": "WAKE/1",
+  "suite": "ta-profile",
+  "vectors": [
+    {
+      "name": "accepts-zwj-and-lf",
+      "input": {
+        "content": "家族 👨‍👩‍👧\n二行目"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "accepts-zwnj",
+      "input": {
+        "content": "ژ‌ژ"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "not-nfc",
+      "input": {
+        "content": "café"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "contains-cr",
+      "input": {
+        "content": "a\rb"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "contains-tab",
+      "input": {
+        "content": "a\tb"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "bidi-rlo",
+      "input": {
+        "content": "abc‮def"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "trailing-space",
+      "input": {
+        "content": "abc "
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "trailing-lf",
+      "input": {
+        "content": "abc\n"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "space-before-lf",
+      "input": {
+        "content": "abc \ndef"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "trailing-ideographic-space",
+      "input": {
+        "content": "abc　"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "line-separator",
+      "input": {
+        "content": "a b"
+      },
+      "expectedError": "invalid_content"
+    },
+    {
+      "name": "empty",
+      "input": {
+        "content": ""
+      },
+      "expectedError": "invalid_content"
+    }
+  ]
+}

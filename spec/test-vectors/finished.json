@@ -1,0 +1,32 @@
+{
+  "wake": "WAKE/1",
+  "suite": "finished",
+  "vectors": [
+    {
+      "name": "client-finished",
+      "input": {
+        "kind": "client",
+        "fkC": "400c4ee66bf95c1435923db453a51d2fb28dc183d8a74454d46b214fde5a51b3",
+        "th": "0768d3fdf020fd90c339fb19ce8e0507375ab33dd3cd1ac5a934322ec44f5c23"
+      },
+      "expected": {
+        "clientFinished": "16574c3ef9e97a8c8a2ec74a84662e799ae3d96a773d57546bdf0a7dd3494bc9"
+      }
+    },
+    {
+      "name": "server-finished",
+      "input": {
+        "kind": "server",
+        "fkS": "b77083eecce084f186a60d6a3749535a3ddd658e76dddca30d7127492a822785",
+        "th": "0768d3fdf020fd90c339fb19ce8e0507375ab33dd3cd1ac5a934322ec44f5c23",
+        "clientFinished": "16574c3ef9e97a8c8a2ec74a84662e799ae3d96a773d57546bdf0a7dd3494bc9",
+        "serverTime": 1767225600000,
+        "absoluteExpiresAt": 1767229200000,
+        "idleTimeoutSec": 1800
+      },
+      "expected": {
+        "serverFinished": "9ec65fae2c502e125a93c815c14e5f0c04d3e052dc8c1cc90cceae446839cf3d"
+      }
+    }
+  ]
+}

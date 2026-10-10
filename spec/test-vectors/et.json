@@ -1,0 +1,240 @@
+{
+  "wake": "WAKE/1",
+  "suite": "et",
+  "vectors": [
+    {
+      "name": "request-get-minimal",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api/items",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d726571000000034745540000000a2f6170692f6974656d73000000000000000000000000"
+      }
+    },
+    {
+      "name": "request-post-with-headers-and-query",
+      "input": {
+        "kind": "request",
+        "method": "POST",
+        "path": "/api/transfer",
+        "query": "a=1&b=%20x",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "idempotency-key",
+            "k-1"
+          ]
+        ],
+        "body": "7b22616d6f756e74223a31303030307d"
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000004504f53540000000d2f6170692f7472616e736665720000000a613d3126623d253230780000003e0000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e0000000f6964656d706f74656e63792d6b6579000000036b2d31000000107b22616d6f756e74223a31303030307d"
+      }
+    },
+    {
+      "name": "request-patch-root",
+      "input": {
+        "kind": "request",
+        "method": "PATCH",
+        "path": "/",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d726571000000055041544348000000012f000000000000000000000000"
+      }
+    },
+    {
+      "name": "response-200-with-headers",
+      "input": {
+        "kind": "response",
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ]
+        ],
+        "body": "7b226f6b223a747275657d"
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200c8000000410000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e0000000d63616368652d636f6e74726f6c000000086e6f2d73746f72650000000b7b226f6b223a747275657d"
+      }
+    },
+    {
+      "name": "response-404-relative-location",
+      "input": {
+        "kind": "response",
+        "status": 404,
+        "headers": [
+          [
+            "location",
+            "/api/x"
+          ]
+        ],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657300000002019400000016000000086c6f636174696f6e000000062f6170692f7800000000"
+      }
+    },
+    {
+      "name": "request-method-trace",
+      "input": {
+        "kind": "request",
+        "method": "TRACE",
+        "path": "/api",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_method"
+    },
+    {
+      "name": "request-query-raw-space",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "a=b c",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-double-slash",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a//b",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-dot-dot",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a/../b",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-encoded-slash-lowercase",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a/%2f",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-encoded-slash-uppercase",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a/%2F",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-encoded-unreserved",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/%41",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-path-under-wake",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/wake/x",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_path"
+    },
+    {
+      "name": "request-header-cookie",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "",
+        "headers": [
+          [
+            "cookie",
+            "a=b"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "request-header-value-crlf",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "",
+        "headers": [
+          [
+            "content-type",
+            "text/plain\r\nSet-Cookie: x=1"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-set-cookie",
+      "input": {
+        "kind": "response",
+        "status": 200,
+        "headers": [
+          [
+            "set-cookie",
+            "a=b"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    }
+  ]
+}
