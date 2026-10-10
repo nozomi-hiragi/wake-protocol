@@ -1170,11 +1170,11 @@ contextは`wake-et`とする。WAKE-ETの利用は任意であり、実装者は
 ```text
 EtRequest  = LP(ascii("WAKE/1 et-req"), ascii(method), ascii(path), ascii(query), headers, body)
 EtResponse = LP(ascii("WAKE/1 et-res"), u16(status), headers, body)
-headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
+headers    = LP(name1, value1, name2, value2, …)     // nameはASCII、valueはHTTP field octets。0組なら ε
 ```
 
 - `method`: `GET` / `POST` / `PUT` / `PATCH` / `DELETE`（大文字）。
-- `query`: `?`を除いた生のクエリ文字列（空でもよい）。4,096バイト以下。RFC 3986の`query`（pchar、`/`、`?`）で構成し、`#`は含まない。パーセントエンコードの16進は大文字・小文字のどちらでもよい。
+- `query`: `?`を除いた生のクエリ文字列（空でもよい）。4,096バイト以下。URL queryの可視ASCII文字で構成し、`#`は含まない。パーセントエンコードは`%`に16進2桁を続ける（16進は大文字・小文字のどちらでもよい）。ETは値を正規化しない。
 - `body`: 生のバイト列。既定の上限は1MiB。
 - `status`: 200〜599。
 
@@ -1182,19 +1182,16 @@ headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
 
 パスは正規化せず、規則に合わないものは**拒否する**（MUST）。
 
-- `/`で始まり、2,048バイト以下で、RFC 3986のpcharと`/`だけで構成される。
-- パーセントエンコードは大文字の16進とする。`%2F`、`%5C`、`%00`、非予約文字のエンコードは拒否する。
-- `//`、`.`や`..`のセグメント、`#`を含むものは拒否する。
+- `/`で始まり、2,048バイト以下で、URL pathの可視ASCII文字で構成される。`?`と`#`は含めない。
+- パーセントエンコードは`%`に16進2桁を続ける。ETはパスを正規化せず、`.`/`..`セグメント、連続する`/`、エンコードされた区切り文字や非予約文字を独自に拒否しない。
 
 ETの符号化はこの形式の検査だけを行い、どのパスに振り分けるかには関与しない。振り分けの規則は§11.5に従う。
 
 ### 11.4 ヘッダー
 
-- 名前は小文字のASCII（RFC 9110のtoken）とする。値は0x20〜0x7EとTAB（0x09）だけで構成する（CRとLFは拒否する）。ヘッダー全体は8KiB以下とする。長さは各ヘッダーの名前と値のバイト数の合計で数える（LPの長さ欄は含めない）。
-- 同じ名前のヘッダーが複数あってもよい。順序を保って運び、HTTPのフィールドごとの規則（RFC 9110 §5.3）に従って解釈する。1つしか持てない次のフィールドが重複していれば拒否する（MUST）: `content-type`、`content-disposition`、`etag`、`last-modified`、`location`、`retry-after`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`。実装者が許可に加えたフィールドについては、実装者が単一値かどうかを設定する。
-- **常に拒否する要求ヘッダー**: `host`、`cookie`、`authorization`、`proxy-*`、`connection`、`keep-alive`、`transfer-encoding`、`te`、`trailer`、`upgrade`、`content-length`、`expect`、`forwarded`、`x-forwarded-*`、`x-real-ip`、`via`、`origin`、`sec-*`、`x-wake-*`
-- **既定で許可する要求ヘッダー**: `accept`、`accept-language`、`content-type`、`content-language`、`if-match`、`if-none-match`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`、および実装者が設定したもの
-- **既定で許可する応答ヘッダー**: `content-type`、`content-language`、`content-disposition`、`etag`、`last-modified`、`cache-control`、`retry-after`、`location`、および実装者が設定したもの。`set-cookie`は拒否する。
+- 名前はRFC 9110のtoken（ASCII）とし、受け取った大文字・小文字を保つ。名前の比較は大文字・小文字を区別しない。値はHTTP field octetsとして扱う。ASCIIではTAB、SP〜VCHARをそのまま符号化し、obs-textはU+0080〜U+00FFを対応する1バイトに写す（UTF-8へ変換しない）。C0制御文字（TABを除く）とDEL、U+00FFを超える値は拒否する。ヘッダー全体は8KiB以下とする。長さは各ヘッダーの名前と値のバイト数の合計で数える（LPの長さ欄は含めない）。
+- 同じ名前のヘッダーが複数あってもよい。名前・値・順序を保って運び、HTTPのフィールドごとの規則（RFC 9110 §5.3）に従って解釈する。`Set-Cookie`のように結合できないフィールドは別々の行として保持する。`content-type`、`content-disposition`、`etag`、`last-modified`、`location`、`retry-after`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`の重複は拒否する（MUST）。要求の`host`はHTTP/1.1の規則（RFC 9112 §3.2）に従い、複数行を拒否する（MUST）。
+- HTTP field nameの独自allowlist/denylistは設けない。
 - `location`の値は、同じオリジン内の絶対パス（RFC 3986のpath-absolute。`/`で始まり`//`で始まらない）と、任意の`?`クエリに限る（MUST）。使える文字はpchar、`/`、`?`とパーセントエンコードだけで、バックスラッシュは含まない（ブラウザが`/\`をオーソリティとして扱う場合があるため）。スキームやオーソリティを含む値、相対参照（`./`や`../`、パス名だけのもの）は拒否する。ETで運ぶ応答が別のオリジンへ誘導することを防ぐためである。
 
 ### 11.5 ディスパッチと認証情報
@@ -1211,7 +1208,7 @@ ETの符号化はこの形式の検査だけを行い、どのパスに振り分
 | status | code | 事象 |
 |---|---|---|
 | 400 | `invalid_path` / `invalid_header` / `invalid_method` | 規則違反（クエリの違反は`invalid_path`とする） |
-| 400 | `invalid_request` | `EtRequest`自体の形式不正（LPの不正、ラベルの不一致、ヘッダーの組が奇数など。§12.4） |
+| 400 | `invalid_request` | `EtRequest`または`EtResponse`の形式不正（LPの不正、ラベルの不一致、ヘッダーの組が奇数、不正なstatusなど。§12.4） |
 | 404 | `route_not_found` | 未登録のルート |
 | 413 | `too_large` | サイズ超過 |
 
@@ -1459,7 +1456,8 @@ SELECT session_id, ?7, ?8, ?9, ...
 
 | code | 対象 |
 |---|---|
-| `bad_request` | LPや固定長フィールドの不正、ラベルの不一致、`MsgHeader`の不正、未定義のChallengeの組み合わせ、Transcriptのmodeとepochの不整合 |
+| `bad_request` | LPや固定長フィールドの不正、ラベルの不一致、`MsgHeader`の不正、未定義のChallengeの組み合わせ、Transcriptのmodeとepochの不整合。ETの`EtRequest` / `EtResponse`構造不正には使わず、`invalid_request`とする（§11.6） |
+| `invalid_request` | ETの`EtRequest` / `EtResponse`構造不正（LP、ラベル、フィールド数/status）。ET queryの違反は`invalid_path`とする（§11.6） |
 | `reauth` | AES-GCMの認証失敗（タグやAADの改ざん） |
 | `too_large` | 平文の長さの上限超過（§8.7） |
 | `invalid_base64url` | 正準形でないBase64url |

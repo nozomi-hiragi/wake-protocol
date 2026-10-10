@@ -167,6 +167,8 @@ async function msgCases(): Promise<Case[]> {
     ...hdrInput(c2sHeader),
     plaintext: "00".repeat(17),
   });
+  const tamperedLongWire = fromHex(longWire.wire as string);
+  tamperedLongWire[tamperedLongWire.length - 1]! ^= 0x01;
   const base = fromHex(baseWire.wire as string);
   const H = encodeHeader(c2sHeader);
   const C = base.slice(4 + H.length); // ciphertext ‖ tag
@@ -282,6 +284,17 @@ async function msgCases(): Promise<Case[]> {
       input: {
         kind: "open",
         wire: longWire.wire as string,
+        key: MSG_KEY_C2S,
+        expectDir: 1,
+        maxPlaintext: 16,
+      },
+      error: "too_large",
+    },
+    {
+      name: "tampered-plaintext-over-limit",
+      input: {
+        kind: "open",
+        wire: hex(tamperedLongWire),
         key: MSG_KEY_C2S,
         expectDir: 1,
         maxPlaintext: 16,
@@ -520,6 +533,11 @@ async function buildSuites(): Promise<SuiteFile[]> {
       { name: "accepts-line-separator", input: { content: "a\u2028b" } },
       { name: "accepts-private-use", input: { content: "a\ue000b" } },
       { name: "accepts-soft-hyphen", input: { content: "a\u00adb" } },
+      { name: "accepts-regional-flag-tags", input: { content: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" } },
+      { name: "accepts-utf8-length-1", input: { content: "a" } },
+      { name: "accepts-utf8-length-65536", input: { content: "a".repeat(65536) } },
+      { name: "rejects-utf8-length-65537", input: { content: "a".repeat(65537) }, error: "invalid_content" },
+      { name: "lone-surrogate", input: { content: "\ud800" }, error: "invalid_content" },
       { name: "not-nfc", input: { content: "cafe\u0301" }, error: "invalid_content" },
       { name: "contains-lf", input: { content: "a\nb" }, error: "invalid_content" },
       { name: "contains-cr", input: { content: "a\rb" }, error: "invalid_content" },
@@ -621,27 +639,31 @@ async function buildSuites(): Promise<SuiteFile[]> {
       {
         name: "request-path-double-slash",
         input: { kind: "request", method: "GET", path: "/a//b", query: "", headers: [], body: "" },
-        error: "invalid_path",
       },
       {
         name: "request-path-dot-dot",
         input: { kind: "request", method: "GET", path: "/a/../b", query: "", headers: [], body: "" },
-        error: "invalid_path",
       },
       {
         name: "request-path-encoded-slash-lowercase",
         input: { kind: "request", method: "GET", path: "/a/%2f", query: "", headers: [], body: "" },
-        error: "invalid_path",
       },
       {
         name: "request-path-encoded-slash-uppercase",
         input: { kind: "request", method: "GET", path: "/a/%2F", query: "", headers: [], body: "" },
-        error: "invalid_path",
       },
       {
         name: "request-path-encoded-unreserved",
         input: { kind: "request", method: "GET", path: "/%41", query: "", headers: [], body: "" },
+      },
+      {
+        name: "request-path-malformed-percent",
+        input: { kind: "request", method: "GET", path: "/a/%zz", query: "", headers: [], body: "" },
         error: "invalid_path",
+      },
+      {
+        name: "request-query-square-brackets",
+        input: { kind: "request", method: "GET", path: "/a", query: "q=[x]", headers: [], body: "" },
       },
       {
         name: "request-path-under-wake-is-dispatchers-job",
@@ -716,7 +738,10 @@ async function buildSuites(): Promise<SuiteFile[]> {
       {
         name: "request-header-cookie",
         input: { kind: "request", method: "GET", path: "/api", query: "", headers: [["cookie", "a=b"]], body: "" },
-        error: "invalid_header",
+      },
+      {
+        name: "request-header-arbitrary-and-case-preserved",
+        input: { kind: "request", method: "GET", path: "/api", query: "", headers: [["X-Trace-Id", "abc"]], body: "" },
       },
       {
         name: "request-header-value-crlf",
@@ -733,7 +758,14 @@ async function buildSuites(): Promise<SuiteFile[]> {
       {
         name: "response-set-cookie",
         input: { kind: "response", status: 200, headers: [["set-cookie", "a=b"]], body: "" },
-        error: "invalid_header",
+      },
+      {
+        name: "response-multiple-set-cookie-preserved",
+        input: { kind: "response", status: 200, headers: [["Set-Cookie", "a=1"], ["set-cookie", "b=2"]], body: "" },
+      },
+      {
+        name: "response-obs-text-field-value",
+        input: { kind: "response", status: 200, headers: [["X-Opaque", "\u00e9"]], body: "" },
       },
     ],
   ]);

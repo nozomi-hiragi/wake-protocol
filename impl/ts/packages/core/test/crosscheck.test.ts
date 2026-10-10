@@ -115,6 +115,9 @@ describe("independent cross-checks (node:crypto)", () => {
   it("hashInput and operationId for the spec 10.3 example match the spec text", async () => {
     const v = (await load("ta")).get("spec-10.3-example")!;
     assert.equal(v.expected!.hashInputLength, 104);
+    const reconstructed = `${v.input.content}\nWAKE-TA-Nonce: ${v.input.nonce}`;
+    assert.equal(v.expected!.hashInput, reconstructed);
+    assert.equal(Buffer.byteLength(reconstructed, "utf8"), v.expected!.hashInputLength);
     const op = createHash("sha256").update(Buffer.from(String(v.expected!.hashInput), "utf8")).digest("hex");
     assert.equal(op, "1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74");
     assert.equal(v.expected!.operationId, op);

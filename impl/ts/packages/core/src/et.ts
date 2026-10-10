@@ -12,60 +12,12 @@ export const ET_QUERY_MAX = 4096;
 export const ET_HEADERS_MAX = 8192;
 export const ET_BODY_MAX = 1024 * 1024;
 
-/** A header as a [lowercase name, value] pair. */
+/** A header as a [field name, field value] pair, in received order. */
 export type EtHeader = readonly [name: string, value: string];
-
-/** §11.4 の既定で許可する要求ヘッダー。 */
-export const ET_DEFAULT_REQUEST_HEADERS: ReadonlySet<string> = new Set([
-  "accept",
-  "accept-language",
+/** HTTP fields whose definitions do not permit combining repeated field lines. */
+const NON_COMBINABLE_FIELDS: ReadonlySet<string> = new Set([
   "content-type",
-  "content-language",
-  "if-match",
-  "if-none-match",
-  "if-modified-since",
-  "if-unmodified-since",
-  "idempotency-key",
-]);
-
-/** §11.4 の既定で許可する応答ヘッダー。 */
-export const ET_DEFAULT_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
-  "content-type",
-  "content-language",
-  "content-disposition",
-  "etag",
-  "last-modified",
-  "cache-control",
-  "retry-after",
-  "location",
-]);
-
-/** §11.4 の常に拒否する要求ヘッダー（完全一致）。 */
-const ALWAYS_REJECTED_REQUEST: ReadonlySet<string> = new Set([
   "host",
-  "cookie",
-  "authorization",
-  "connection",
-  "keep-alive",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-  "content-length",
-  "expect",
-  "forwarded",
-  "x-real-ip",
-  "via",
-  "origin",
-]);
-/** §11.4 の常に拒否する要求ヘッダー（接頭辞）。 */
-const ALWAYS_REJECTED_REQUEST_PREFIXES = ["proxy-", "x-forwarded-", "sec-", "x-wake-"];
-/** §11.4 の常に拒否する応答ヘッダー。 */
-const ALWAYS_REJECTED_RESPONSE: ReadonlySet<string> = new Set(["set-cookie"]);
-
-/** §11.4: fields that may appear only once; a repeat is `invalid_header`. */
-export const ET_SINGLETON_HEADERS: ReadonlySet<string> = new Set([
-  "content-type",
   "content-disposition",
   "etag",
   "last-modified",
@@ -76,10 +28,8 @@ export const ET_SINGLETON_HEADERS: ReadonlySet<string> = new Set([
   "idempotency-key",
 ]);
 
-/** Optional per-deployment settings; `*Headers` extend the default allowlists. */
+/** Optional per-deployment settings. */
 export interface EtOptions {
-  requestHeaders?: Iterable<string>;
-  responseHeaders?: Iterable<string>;
   bodyLimit?: number;
 }
 
@@ -99,101 +49,69 @@ export interface EtResponse {
   body: Uint8Array;
 }
 
-const TOKEN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
-const HEADER_VALUE = /^[\t\x20-\x7e]*$/;
-/** RFC 3986 pchar, "/" and "%" (percent-encoding is checked separately). */
-const PCHAR_SET = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*$/;
-/** RFC 3986 query = *( pchar / "/" / "?" ), plus "%" for percent-encoding. */
-const QUERY_SET = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/?%]*$/;
-/** path-absolute with optional query: "/" not followed by "/", then (backslash excluded by the charset) pchar / "/" / "?" / "%". */
+const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
+// ET carries an origin-form target without normalization: reject delimiters and
+// characters that cannot appear literally in an HTTP request target, but do not
+// impose path-segment or percent-encoding normalization policies.
+const PATH_CHARS = /^[\x21-\x7e]*$/;
+const QUERY_CHARS = /^[\x21-\x7e]*$/;
 const LOCATION = /^\/(?!\/)[A-Za-z0-9\-._~!$&'()*+,;=:@/?%]*$/;
-const UNRESERVED_BYTE = /^[A-Za-z0-9\-._~]$/;
 
 export function checkMethod(method: string): asserts method is EtMethod {
   if (!(ET_METHODS as readonly string[]).includes(method)) fail("invalid_method", "method not allowed");
 }
 
-/** Every percent-encoding must be "%" followed by two hex digits (uppercase only for paths). */
-function checkPercentEncoding(s: string, code: string, upperOnly: boolean): void {
-  const re = upperOnly ? /^%[0-9A-F]{2}$/ : /^%[0-9A-Fa-f]{2}$/;
+/** Every percent-encoding must be "%" followed by two hex digits. */
+function checkPercentEncoding(s: string, code: string): void {
+  const re = /^%[0-9A-Fa-f]{2}$/;
   for (let i = 0; i < s.length; i++) {
     if (s[i] !== "%") continue;
-    if (!re.test(s.slice(i, i + 3))) fail(code, upperOnly ? "percent-encoding must be uppercase hex" : "bad percent-encoding");
+    if (!re.test(s.slice(i, i + 3))) fail(code, "bad percent-encoding");
     i += 2;
   }
 }
 
-/** §11.3. Rejects rather than normalizes. */
+/** §11.3. Validates an absolute-path request target without normalizing it. */
 export function checkPath(path: string): void {
   if (path.length === 0 || path.length > ET_PATH_MAX) fail("invalid_path", "path length");
   if (path[0] !== "/") fail("invalid_path", "path must start with /");
-  if (!PCHAR_SET.test(path)) fail("invalid_path", "path has characters outside pchar");
-  if (path.includes("#") || path.includes("//")) fail("invalid_path", "path has // or #");
-  checkPercentEncoding(path, "invalid_path", true);
-  for (let i = 0; i < path.length; i++) {
-    if (path[i] !== "%") continue;
-    const code = parseInt(path.slice(i + 1, i + 3), 16);
-    if (code === 0x2f || code === 0x5c || code === 0x00) fail("invalid_path", "encoded / \\ or NUL");
-    if (UNRESERVED_BYTE.test(String.fromCharCode(code))) fail("invalid_path", "encoded unreserved character");
-    i += 2;
-  }
-  for (const seg of path.split("/")) {
-    if (seg === "." || seg === "..") fail("invalid_path", "dot segment");
-  }
+  if (!PATH_CHARS.test(path) || path.includes("?") || path.includes("#")) fail("invalid_path", "invalid request-target path character");
+  checkPercentEncoding(path, "invalid_path");
 }
 
-/**
- * §11.2 with RFC 3986 `query = *( pchar / "/" / "?" )`. Raw spaces, '#',
- * '[', ']', '"', '<', '>', '\\', '^', '`', '{', '|', '}' are rejected.
- * Percent-encoding hex digits may be upper- or lowercase (§11.2).
- */
+/** §11.2. Query is carried unchanged; only request-target delimiters/control bytes are rejected. */
 export function checkQuery(query: string): void {
   if (query.length > ET_QUERY_MAX) fail("invalid_path", "query too long");
-  if (!QUERY_SET.test(query)) fail("invalid_path", "query has characters outside RFC 3986 query");
-  checkPercentEncoding(query, "invalid_path", false);
+  if (!QUERY_CHARS.test(query) || query.includes("#")) fail("invalid_path", "invalid request-target query character");
+  checkPercentEncoding(query, "invalid_path");
 }
 
-function checkHeaderList(
-  headers: readonly EtHeader[],
-  allowed: ReadonlySet<string>,
-  extra: Iterable<string> | undefined,
-  alwaysRejected: (name: string) => boolean,
-  extraCheck?: (name: string, value: string) => void,
-): void {
-  const extraSet = new Set(extra ?? []);
+function checkHeaderList(headers: readonly EtHeader[], extraCheck?: (name: string, value: string) => void): void {
   const seen = new Set<string>();
   let total = 0;
   for (const [name, value] of headers) {
-    if (!TOKEN.test(name)) fail("invalid_header", "header name must be lowercase token");
+    if (!TOKEN.test(name)) fail("invalid_header", "header name must be an HTTP token");
     if (!HEADER_VALUE.test(value)) fail("invalid_header", "header value character");
-    if (alwaysRejected(name)) fail("invalid_header", `header not allowed: ${name}`);
-    if (!allowed.has(name) && !extraSet.has(name)) fail("invalid_header", `header not in allowlist: ${name}`);
-    if (ET_SINGLETON_HEADERS.has(name) && seen.has(name)) fail("invalid_header", `duplicate header: ${name}`);
-    seen.add(name);
-    extraCheck?.(name, value);
+    const lowerName = name.toLowerCase();
+    if (NON_COMBINABLE_FIELDS.has(lowerName) && seen.has(lowerName)) fail("invalid_header", `duplicate non-combinable field: ${name}`);
+    seen.add(lowerName);
+    extraCheck?.(lowerName, value);
     total += name.length + value.length;
   }
   if (total > ET_HEADERS_MAX) fail("invalid_header", "headers exceed 8 KiB");
 }
 
-export function checkRequestHeaders(headers: readonly EtHeader[], extraAllowed?: Iterable<string>): void {
-  checkHeaderList(headers, ET_DEFAULT_REQUEST_HEADERS, extraAllowed, (n) => {
-    return ALWAYS_REJECTED_REQUEST.has(n) || ALWAYS_REJECTED_REQUEST_PREFIXES.some((p) => n.startsWith(p));
-  });
+export function checkRequestHeaders(headers: readonly EtHeader[]): void {
+  checkHeaderList(headers);
 }
 
-export function checkResponseHeaders(headers: readonly EtHeader[], extraAllowed?: Iterable<string>): void {
-  checkHeaderList(
-    headers,
-    ET_DEFAULT_RESPONSE_HEADERS,
-    extraAllowed,
-    (n) => ALWAYS_REJECTED_RESPONSE.has(n),
-    (name, value) => {
+export function checkResponseHeaders(headers: readonly EtHeader[]): void {
+  checkHeaderList(headers, (name, value) => {
       // §11.4: location is path-absolute only (RFC 3986), same origin.
-      if (name === "location" && !LOCATION.test(value)) fail("invalid_header", "location must be a path-absolute reference");
-      if (name === "location") checkPercentEncoding(value, "invalid_header", false);
-    },
-  );
+      if (name === "location" && (!LOCATION.test(value) || value.includes("#"))) fail("invalid_header", "location must be a path-absolute reference");
+      if (name === "location") checkPercentEncoding(value, "invalid_header");
+  });
 }
 
 /** §11.2: status is 200..599. A structural field error, reported as invalid_request (§12.4). */
@@ -203,7 +121,7 @@ export function checkStatus(status: number): void {
 
 function encodeHeaders(headers: readonly EtHeader[]): Bytes {
   const flat: Bytes[] = [];
-  for (const [name, value] of headers) flat.push(ascii(name), ascii(value));
+  for (const [name, value] of headers) flat.push(ascii(name), latin1Bytes(value));
   return lp(...flat);
 }
 
@@ -220,6 +138,16 @@ function latin1(b: Uint8Array): string {
   let s = "";
   for (const x of b) s += String.fromCharCode(x);
   return s;
+}
+
+function latin1Bytes(s: string): Bytes {
+  const b = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c > 0xff) fail("invalid_header", "header value must map to HTTP field octets");
+    b[i] = c;
+  }
+  return b;
 }
 
 function checkBody(body: Uint8Array, opts: EtOptions): void {
@@ -247,7 +175,7 @@ export function encodeEtRequest(r: EtRequest, opts: EtOptions = {}): Bytes {
   checkMethod(r.method);
   checkPath(r.path);
   checkQuery(r.query);
-  checkRequestHeaders(r.headers, opts.requestHeaders);
+  checkRequestHeaders(r.headers);
   checkBody(r.body, opts);
   return lp(
     ascii(ET_REQ_LABEL),
@@ -270,7 +198,7 @@ export function decodeEtRequest(bytes: Uint8Array, opts: EtOptions = {}): EtRequ
     const query = latin1(f[3]!);
     checkQuery(query);
     const headers = decodeHeaders(f[4]!);
-    checkRequestHeaders(headers, opts.requestHeaders);
+    checkRequestHeaders(headers);
     const body = f[5]!;
     checkBody(body, opts);
     return { method, path, query, headers, body };
@@ -279,7 +207,7 @@ export function decodeEtRequest(bytes: Uint8Array, opts: EtOptions = {}): EtRequ
 
 export function encodeEtResponse(r: EtResponse, opts: EtOptions = {}): Bytes {
   checkStatus(r.status);
-  checkResponseHeaders(r.headers, opts.responseHeaders);
+  checkResponseHeaders(r.headers);
   checkBody(r.body, opts);
   return lp(ascii(ET_RES_LABEL), u16(r.status), encodeHeaders(r.headers), r.body);
 }
@@ -291,7 +219,7 @@ export function decodeEtResponse(bytes: Uint8Array, opts: EtOptions = {}): EtRes
     const status = readU16(f[1]!);
     checkStatus(status);
     const headers = decodeHeaders(f[2]!);
-    checkResponseHeaders(headers, opts.responseHeaders);
+    checkResponseHeaders(headers);
     const body = f[3]!;
     checkBody(body, opts);
     return { status, headers, body };
