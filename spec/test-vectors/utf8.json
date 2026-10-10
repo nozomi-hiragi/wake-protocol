@@ -1,0 +1,75 @@
+{
+  "wake": "WAKE/1",
+  "suite": "utf8",
+  "vectors": [
+    {
+      "name": "encode-japanese",
+      "input": {
+        "text": "送金"
+      },
+      "expected": {
+        "bytes": "e98081e98791"
+      }
+    },
+    {
+      "name": "encode-zwj-family",
+      "input": {
+        "text": "👨‍👩‍👧"
+      },
+      "expected": {
+        "bytes": "f09f91a8e2808df09f91a9e2808df09f91a7"
+      }
+    },
+    {
+      "name": "decode-japanese",
+      "input": {
+        "bytes": "e698a5"
+      },
+      "expected": {
+        "text": "春"
+      }
+    },
+    {
+      "name": "invalid-continuation",
+      "input": {
+        "bytes": "c328"
+      },
+      "expectedError": "invalid_utf8"
+    },
+    {
+      "name": "encoded-surrogate",
+      "input": {
+        "bytes": "eda080"
+      },
+      "expectedError": "invalid_utf8"
+    },
+    {
+      "name": "five-byte-sequence",
+      "input": {
+        "bytes": "f888808080"
+      },
+      "expectedError": "invalid_utf8"
+    },
+    {
+      "name": "overlong-slash",
+      "input": {
+        "bytes": "c0af"
+      },
+      "expectedError": "invalid_utf8"
+    },
+    {
+      "name": "truncated-three-byte",
+      "input": {
+        "bytes": "e282"
+      },
+      "expectedError": "invalid_utf8"
+    },
+    {
+      "name": "invalid-lead-byte",
+      "input": {
+        "bytes": "ff"
+      },
+      "expectedError": "invalid_utf8"
+    }
+  ]
+}

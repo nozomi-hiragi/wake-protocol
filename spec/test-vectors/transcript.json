@@ -1,0 +1,68 @@
+{
+  "wake": "WAKE/1",
+  "suite": "transcript",
+  "vectors": [
+    {
+      "name": "kx-login-basic",
+      "input": {
+        "mode": 1,
+        "exchangeId": "462704469d023c210a1b7a841c0b3f76",
+        "sessionId": "6ae5e6afe9ddf0f51e088a26d86e7ca5f3e3b2a916be67fd280f6a9e47450dcf",
+        "epoch": 0,
+        "prevTh": "",
+        "serverNonce": "2f7ea4169e2eac5587faafaea8a3bb53126dc7704c53e4a736e162cbb1026c11",
+        "serverPublicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "clientPublicKey": "04ca7d7f18235556a643d6b1957ce05e7cb7d6c29c30c813b5887af2058125523231880d51586cd63b87679912f7550f65239e3d6171996e8dc02e09d78f178e14"
+      },
+      "expected": {
+        "encoded": "0000001457414b452f31206b782d7472616e736372697074000000010100000010462704469d023c210a1b7a841c0b3f76000000206ae5e6afe9ddf0f51e088a26d86e7ca5f3e3b2a916be67fd280f6a9e47450dcf000000040000000000000000000000202f7ea4169e2eac5587faafaea8a3bb53126dc7704c53e4a736e162cbb1026c1100000041040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e10000004104ca7d7f18235556a643d6b1957ce05e7cb7d6c29c30c813b5887af2058125523231880d51586cd63b87679912f7550f65239e3d6171996e8dc02e09d78f178e14",
+        "th": "482c9be95f91af4438e4bc8ec04b580d483a82f4100213f2fd7c63d7562d5ed5"
+      }
+    },
+    {
+      "name": "kr-rekey",
+      "input": {
+        "mode": 2,
+        "exchangeId": "5f80b324f9d6cf60e7241f12471f4f81",
+        "sessionId": "54b4facc2138349ae1a3113ec9e29eb02445ad13dcff035c8a3adf9f0af907cc",
+        "epoch": 1,
+        "prevTh": "56bf02c1f4d778f15bbc510da3b345a55289fadde5fc270f532f55d540964a2b",
+        "serverNonce": "a7c9c668964907b0de9b8aa04ed2db88bdfd7edc3b54ac29a94dcf1a89f53fa9",
+        "serverPublicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be02",
+        "clientPublicKey": "04e52a2545234e543e6b14da30b65cc6e3b7502f2bcdeae103999d143ff91bbab5ad274bda6a51275c299ec32dde6c43898587bf9e59bb7a8c622a9157ebdfce8d"
+      },
+      "expected": {
+        "encoded": "0000001457414b452f31206b782d7472616e7363726970740000000102000000105f80b324f9d6cf60e7241f12471f4f810000002054b4facc2138349ae1a3113ec9e29eb02445ad13dcff035c8a3adf9f0af907cc00000004000000010000002056bf02c1f4d778f15bbc510da3b345a55289fadde5fc270f532f55d540964a2b00000020a7c9c668964907b0de9b8aa04ed2db88bdfd7edc3b54ac29a94dcf1a89f53fa900000041043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be020000004104e52a2545234e543e6b14da30b65cc6e3b7502f2bcdeae103999d143ff91bbab5ad274bda6a51275c299ec32dde6c43898587bf9e59bb7a8c622a9157ebdfce8d",
+        "th": "68471fe16b7682a56f700b67c925ed114da5d73ceab91bf9aea0f0c62a0f3e8c"
+      }
+    },
+    {
+      "name": "kx-login-with-nonzero-epoch",
+      "input": {
+        "mode": 1,
+        "exchangeId": "462704469d023c210a1b7a841c0b3f76",
+        "sessionId": "6ae5e6afe9ddf0f51e088a26d86e7ca5f3e3b2a916be67fd280f6a9e47450dcf",
+        "epoch": 1,
+        "prevTh": "",
+        "serverNonce": "2f7ea4169e2eac5587faafaea8a3bb53126dc7704c53e4a736e162cbb1026c11",
+        "serverPublicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "clientPublicKey": "04ca7d7f18235556a643d6b1957ce05e7cb7d6c29c30c813b5887af2058125523231880d51586cd63b87679912f7550f65239e3d6171996e8dc02e09d78f178e14"
+      },
+      "expectedError": "bad_request"
+    },
+    {
+      "name": "kr-rekey-with-empty-prevTh",
+      "input": {
+        "mode": 2,
+        "exchangeId": "5f80b324f9d6cf60e7241f12471f4f81",
+        "sessionId": "54b4facc2138349ae1a3113ec9e29eb02445ad13dcff035c8a3adf9f0af907cc",
+        "epoch": 1,
+        "prevTh": "",
+        "serverNonce": "a7c9c668964907b0de9b8aa04ed2db88bdfd7edc3b54ac29a94dcf1a89f53fa9",
+        "serverPublicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be02",
+        "clientPublicKey": "04e52a2545234e543e6b14da30b65cc6e3b7502f2bcdeae103999d143ff91bbab5ad274bda6a51275c299ec32dde6c43898587bf9e59bb7a8c622a9157ebdfce8d"
+      },
+      "expectedError": "bad_request"
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "wake": "WAKE/1",
+  "suite": "base64url",
+  "vectors": [
+    {
+      "name": "empty",
+      "input": {
+        "bytes": ""
+      },
+      "expected": {
+        "base64url": ""
+      }
+    },
+    {
+      "name": "one-byte",
+      "input": {
+        "bytes": "01"
+      },
+      "expected": {
+        "base64url": "AQ"
+      }
+    },
+    {
+      "name": "two-bytes",
+      "input": {
+        "bytes": "0102"
+      },
+      "expected": {
+        "base64url": "AQI"
+      }
+    },
+    {
+      "name": "three-bytes",
+      "input": {
+        "bytes": "010203"
+      },
+      "expected": {
+        "base64url": "AQID"
+      }
+    },
+    {
+      "name": "decode-three-bytes",
+      "input": {
+        "base64url": "AQID"
+      },
+      "expected": {
+        "bytes": "010203"
+      }
+    },
+    {
+      "name": "decode-url-alphabet",
+      "input": {
+        "base64url": "_-8"
+      },
+      "expected": {
+        "bytes": "ffef"
+      }
+    },
+    {
+      "name": "padding-equals",
+      "input": {
+        "base64url": "AQ=="
+      },
+      "expectedError": "invalid_base64url"
+    },
+    {
+      "name": "non-zero-trailing-bits",
+      "input": {
+        "base64url": "AB"
+      },
+      "expectedError": "invalid_base64url"
+    },
+    {
+      "name": "non-zero-trailing-bits-3",
+      "input": {
+        "base64url": "AAF"
+      },
+      "expectedError": "invalid_base64url"
+    },
+    {
+      "name": "plus-outside-alphabet",
+      "input": {
+        "base64url": "A+A"
+      },
+      "expectedError": "invalid_base64url"
+    },
+    {
+      "name": "slash-outside-alphabet",
+      "input": {
+        "base64url": "A/A"
+      },
+      "expectedError": "invalid_base64url"
+    },
+    {
+      "name": "impossible-length",
+      "input": {
+        "base64url": "AAAAA"
+      },
+      "expectedError": "invalid_base64url"
+    }
+  ]
+}

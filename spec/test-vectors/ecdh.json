@@ -1,0 +1,84 @@
+{
+  "wake": "WAKE/1",
+  "suite": "ecdh",
+  "vectors": [
+    {
+      "name": "shared-secret-leading-zero",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be02"
+      },
+      "expected": {
+        "sharedSecret": "003353938717ba44c354a54a0f668a0d4b8a5295eb29a4180b2896111ccbb277"
+      }
+    },
+    {
+      "name": "shared-secret-leading-zero-reverse",
+      "input": {
+        "privateKey": "7d9966b3ffd524cbf09f86507ab56093cd087193601d6d8f239ff2b02f156751",
+        "publicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be02",
+        "peerPublicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1"
+      },
+      "expected": {
+        "sharedSecret": "003353938717ba44c354a54a0f668a0d4b8a5295eb29a4180b2896111ccbb277"
+      }
+    },
+    {
+      "name": "shared-secret-ordinary",
+      "input": {
+        "privateKey": "f629f30f4f1434ae5545385bab37dd1768c7df61f7abab439e07a3b4de754d5f",
+        "publicKey": "04ca7d7f18235556a643d6b1957ce05e7cb7d6c29c30c813b5887af2058125523231880d51586cd63b87679912f7550f65239e3d6171996e8dc02e09d78f178e14",
+        "peerPublicKey": "04e52a2545234e543e6b14da30b65cc6e3b7502f2bcdeae103999d143ff91bbab5ad274bda6a51275c299ec32dde6c43898587bf9e59bb7a8c622a9157ebdfce8d"
+      },
+      "expected": {
+        "sharedSecret": "759931c025a9690df5f8c194330fd1ceda28fb563844fc80b6636a3bf79b62df"
+      }
+    },
+    {
+      "name": "compressed-point",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "023b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e"
+      },
+      "expectedError": "invalid_public_key"
+    },
+    {
+      "name": "hybrid-point",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "063b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be02"
+      },
+      "expectedError": "invalid_public_key"
+    },
+    {
+      "name": "point-not-on-curve",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "0400000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"
+      },
+      "expectedError": "invalid_public_key"
+    },
+    {
+      "name": "wrong-length-64",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be"
+      },
+      "expectedError": "invalid_public_key"
+    },
+    {
+      "name": "wrong-length-66",
+      "input": {
+        "privateKey": "e4214c50bc9799c658fefce613a203c48f53fbc60b54a392bb007173df7f9930",
+        "publicKey": "040f50dcb740cbe559c37ac5be1c691de1c2e8eaf93964f66b7f55c7292b92dea58ad10ee854bc954f70866178cddddcea6c099a0e3b6cbcffa37f136938c6e8e1",
+        "peerPublicKey": "043b835b358e22e8e8b9027ec9b67ba135ba6b6e8f82b8bbaf62349bfc69b2d83e4ae6ba059970089616c45b6f9043ecf85b2a9db77b0bb8c835dac8765ae9be0200"
+      },
+      "expectedError": "invalid_public_key"
+    }
+  ]
+}

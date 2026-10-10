@@ -1,0 +1,55 @@
+{
+  "wake": "WAKE/1",
+  "suite": "ta",
+  "vectors": [
+    {
+      "name": "spec-10.3-example",
+      "input": {
+        "content": "送金要求\n送金先: 山田太郎\n金額: 10000 JPY",
+        "nonce": "3f9a1c7e5b2d4f6081a3c5e7092b4d6f"
+      },
+      "expected": {
+        "hashInput": "送金要求\n送金先: 山田太郎\n金額: 10000 JPY\nWAKE-TA-Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f",
+        "hashInputLength": 102,
+        "operationId": "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461"
+      }
+    },
+    {
+      "name": "emoji-and-japanese",
+      "input": {
+        "content": "承認をお願いします 👍🏽\n金額: 500 JPY",
+        "nonce": "66707e356f982360de73f318a91e3483"
+      },
+      "expected": {
+        "hashInput": "承認をお願いします 👍🏽\n金額: 500 JPY\nWAKE-TA-Nonce: 66707e356f982360de73f318a91e3483",
+        "hashInputLength": 100,
+        "operationId": "1989f96aad811f1a9c9c21a7dee86b86471dc8d10562f838c73fbbd1ea134cdc"
+      }
+    },
+    {
+      "name": "zwj-family-sequence",
+      "input": {
+        "content": "家族への送金 👨‍👩‍👧\n金額: 3000 JPY",
+        "nonce": "75e11e8acc3eb3aa5f34c720679c76b0"
+      },
+      "expected": {
+        "hashInput": "家族への送金 👨‍👩‍👧\n金額: 3000 JPY\nWAKE-TA-Nonce: 75e11e8acc3eb3aa5f34c720679c76b0",
+        "hashInputLength": 102,
+        "operationId": "ae1b3f4de573bd4bbc4719fda0a2d3ab887443ca61c5cbe3cdc5bbe4998549df"
+      }
+    },
+    {
+      "name": "ta-binding",
+      "input": {
+        "approvalId": "66707e356f982360de73f318a91e3483",
+        "operationId": "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461",
+        "approvalNonce": "c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a0",
+        "sessionId": "ca8bf24e74c35e22937af7defddae539c1187a6042d6a4be57ccedbc17f6aee8"
+      },
+      "expected": {
+        "encoded": "0000001157414b452f312074612d617070726f76650000001066707e356f982360de73f318a91e3483000000205f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b46100000020c3bbfa5148d6ffd2659fb689a588621b0bf45cfbe9785ccda8afa18a6bf542a000000020ca8bf24e74c35e22937af7defddae539c1187a6042d6a4be57ccedbc17f6aee8",
+        "ta": "230264254499278e96dd69648d3ffb88a610a22dde0b98bebdf8178043086bd0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "wake": "WAKE/1",
+  "suite": "challenge",
+  "vectors": [
+    {
+      "name": "kx",
+      "input": {
+        "ceremony": "kx",
+        "th": "2277f2fb3cbca5e681a570f8d3128c48e592bcc251a077ddf16afd68a2a51acc",
+        "ta": ""
+      },
+      "expected": {
+        "encoded": "0000001957414b452f3120776562617574686e2d6368616c6c656e6765000000202277f2fb3cbca5e681a570f8d3128c48e592bcc251a077ddf16afd68a2a51acc00000000",
+        "challenge": "28aa868ee6046fe8e54503935e4db9822be2ff0a613a95ecbf8213f5cd7537ac"
+      }
+    },
+    {
+      "name": "kr",
+      "input": {
+        "ceremony": "kr",
+        "th": "bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b6143608",
+        "ta": ""
+      },
+      "expected": {
+        "encoded": "0000001957414b452f3120776562617574686e2d6368616c6c656e676500000020bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b614360800000000",
+        "challenge": "23776c7d48fc262d96954b6454eb1531e406bfc50d043613cc46f3ff0d1fad21"
+      }
+    },
+    {
+      "name": "ta",
+      "input": {
+        "ceremony": "ta",
+        "th": "",
+        "ta": "a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077"
+      },
+      "expected": {
+        "encoded": "0000001957414b452f3120776562617574686e2d6368616c6c656e67650000000000000020a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077",
+        "challenge": "e467ee2cb33509ecf4819ed97faf9de7b676566f7ea93d7abfd08ec536f4b6b5"
+      }
+    },
+    {
+      "name": "ta+kr",
+      "input": {
+        "ceremony": "ta+kr",
+        "th": "bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b6143608",
+        "ta": "a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077"
+      },
+      "expected": {
+        "encoded": "0000001957414b452f3120776562617574686e2d6368616c6c656e676500000020bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b614360800000020a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077",
+        "challenge": "77fa2b1eced1ccb9db5a30e8b6bfbb5ecbf6c668641e083f846bd2de282c36f9"
+      }
+    },
+    {
+      "name": "both-empty",
+      "input": {
+        "ceremony": "kx",
+        "th": "",
+        "ta": ""
+      },
+      "expectedError": "bad_request"
+    },
+    {
+      "name": "kx-with-ta",
+      "input": {
+        "ceremony": "kx",
+        "th": "2277f2fb3cbca5e681a570f8d3128c48e592bcc251a077ddf16afd68a2a51acc",
+        "ta": "a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077"
+      },
+      "expectedError": "bad_request"
+    },
+    {
+      "name": "ta-with-th",
+      "input": {
+        "ceremony": "ta",
+        "th": "bdc23d49b16439f253b228a4497722a00e08f042bc584dc779393fc6b6143608",
+        "ta": "a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077"
+      },
+      "expectedError": "bad_request"
+    },
+    {
+      "name": "ta+kr-without-th",
+      "input": {
+        "ceremony": "ta+kr",
+        "th": "",
+        "ta": "a998bff7c68ab2a1a6c662dbbfe8cd13eede79749ebd80c360a0285637ce3077"
+      },
+      "expectedError": "bad_request"
+    }
+  ]
+}

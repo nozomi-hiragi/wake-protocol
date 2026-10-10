@@ -1,0 +1,20 @@
+{
+  "name": "wake-protocol-ts",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p packages/core",
+    "test": "npm test -w @wake-protocol/core",
+    "vectors": "npm run vectors -w @wake-protocol/core"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3"
+  }
+}
