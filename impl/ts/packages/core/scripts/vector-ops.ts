@@ -242,7 +242,12 @@ export async function runCase(suite: string, o: Obj): Promise<Obj> {
         }
         case "open": {
           const key = await aesKey(bytes(o, "key"));
-          const { plaintext } = await openWire(key, bytes(o, "wire"), num(o, "expectDir"));
+          const { plaintext } = await openWire(
+            key,
+            bytes(o, "wire"),
+            num(o, "expectDir"),
+            o.maxPlaintext === undefined ? undefined : { maxPlaintext: num(o, "maxPlaintext") },
+          );
           return { plaintext: hex(plaintext) };
         }
         default:

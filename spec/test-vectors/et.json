@@ -125,7 +125,9 @@
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000052f612f2f62000000000000000000000000"
+      }
     },
     {
       "name": "request-path-dot-dot",
@@ -137,7 +139,9 @@
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f612f2e2e2f62000000000000000000000000"
+      }
     },
     {
       "name": "request-path-encoded-slash-lowercase",
@@ -149,7 +153,9 @@
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f253266000000000000000000000000"
+      }
     },
     {
       "name": "request-path-encoded-slash-uppercase",
@@ -161,7 +167,9 @@
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f253246000000000000000000000000"
+      }
     },
     {
       "name": "request-path-encoded-unreserved",
@@ -173,10 +181,38 @@
         "headers": [],
         "body": ""
       },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f253431000000000000000000000000"
+      }
+    },
+    {
+      "name": "request-path-malformed-percent",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a/%zz",
+        "query": "",
+        "headers": [],
+        "body": ""
+      },
       "expectedError": "invalid_path"
     },
     {
-      "name": "request-path-under-wake",
+      "name": "request-query-square-brackets",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/a",
+        "query": "q=[x]",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000022f6100000005713d5b785d0000000000000000"
+      }
+    },
+    {
+      "name": "request-path-under-wake-is-dispatchers-job",
       "input": {
         "kind": "request",
         "method": "GET",
@@ -185,7 +221,146 @@
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f77616b652f78000000000000000000000000"
+      }
+    },
+    {
+      "name": "request-query-lowercase-percent",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "q=%e3%81%82",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f6170690000000b713d2565332538312538320000000000000000"
+      }
+    },
+    {
+      "name": "request-duplicate-accept-keeps-order",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "",
+        "headers": [
+          [
+            "accept",
+            "text/html"
+          ],
+          [
+            "accept",
+            "application/json"
+          ]
+        ],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f61706900000000000000350000000661636365707400000009746578742f68746d6c00000006616363657074000000106170706c69636174696f6e2f6a736f6e00000000"
+      }
+    },
+    {
+      "name": "request-duplicate-content-type",
+      "input": {
+        "kind": "request",
+        "method": "POST",
+        "path": "/api",
+        "query": "",
+        "headers": [
+          [
+            "content-type",
+            "text/plain"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-duplicate-content-type",
+      "input": {
+        "kind": "response",
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "text/plain"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-location-protocol-relative",
+      "input": {
+        "kind": "response",
+        "status": 302,
+        "headers": [
+          [
+            "location",
+            "//evil.example/x"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-location-absolute-url",
+      "input": {
+        "kind": "response",
+        "status": 302,
+        "headers": [
+          [
+            "location",
+            "https://evil.example/"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-location-backslash",
+      "input": {
+        "kind": "response",
+        "status": 302,
+        "headers": [
+          [
+            "location",
+            "/\\evil.example"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
+    },
+    {
+      "name": "response-location-bare-relative",
+      "input": {
+        "kind": "response",
+        "status": 302,
+        "headers": [
+          [
+            "location",
+            "x/y"
+          ]
+        ],
+        "body": ""
+      },
+      "expectedError": "invalid_header"
     },
     {
       "name": "request-header-cookie",
@@ -202,7 +377,28 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f617069000000000000001100000006636f6f6b696500000003613d6200000000"
+      }
+    },
+    {
+      "name": "request-header-arbitrary-and-case-preserved",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "path": "/api",
+        "query": "",
+        "headers": [
+          [
+            "X-Trace-Id",
+            "abc"
+          ]
+        ],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f61706900000000000000150000000a582d54726163652d49640000000361626300000000"
+      }
     },
     {
       "name": "request-header-value-crlf",
@@ -234,7 +430,47 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200c8000000150000000a7365742d636f6f6b696500000003613d6200000000"
+      }
+    },
+    {
+      "name": "response-multiple-set-cookie-preserved",
+      "input": {
+        "kind": "response",
+        "status": 200,
+        "headers": [
+          [
+            "Set-Cookie",
+            "a=1"
+          ],
+          [
+            "set-cookie",
+            "b=2"
+          ]
+        ],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200c80000002a0000000a5365742d436f6f6b696500000003613d310000000a7365742d636f6f6b696500000003623d3200000000"
+      }
+    },
+    {
+      "name": "response-obs-text-field-value",
+      "input": {
+        "kind": "response",
+        "status": 200,
+        "headers": [
+          [
+            "X-Opaque",
+            "é"
+          ]
+        ],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200c80000001100000008582d4f706171756500000001e900000000"
+      }
     }
   ]
 }

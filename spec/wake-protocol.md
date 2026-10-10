@@ -6,18 +6,30 @@
 |---|---|
 | プロトコル | WAKE（WebAuthn Authenticated Key Exchange） |
 | ワイヤ上のバージョン | `WAKE/1` |
-| 文書版 | 設計ドラフト **v0.4** |
+| 文書版 | 設計ドラフト **v0.5** |
 | 最終更新 | 2026-10-10 |
-| 前版 | v0.3（2026-10-09） |
+| 前版 | v0.4（2026-10-10） |
 | 対象 | Webブラウザのクライアント、アプリケーションサーバー、複数サーバー構成 |
 | 基本暗号 | WebAuthn / 一時ECDH P-256 / HKDF-SHA-256 / HMAC-SHA-256 / AES-256-GCM |
-| 状態 | **未実装・未監査の提案仕様**。参照実装とテストベクターによる整合性検証、および第三者による暗号プロトコルレビューを経るまで本番採用しない |
+| 状態 | **未監査の提案仕様**。仮実装（`impl/ts/`）とテストベクター（`spec/test-vectors/`）で検証中。第三者による暗号プロトコルレビューを経るまで本番採用しない |
 
 > 規範的な記述には **MUST / MUST NOT / SHOULD / SHOULD NOT / MAY**（RFC 2119 / RFC 8174）を用いる。「参考」と明記した節・例・付録は規範ではない。
 
 ---
 
-## 0. v0.3からの主な変更
+## 0. v0.4からの主な変更
+
+仮実装とテストベクターによる検証を受けた変更。
+
+| 区分 | 変更 |
+|---|---|
+| WAKE-TA | 文面プロファイルを簡素化。制御文字（一般カテゴリCc）を**LFを含めて**禁止し、それ以外の特殊な文字は拒否せず承認画面で可視化する（§10.4、§10.11）。`content`は1行になり、§10.3の例を更新 |
+| WAKE-ET | ETは通常のHTTP要求・応答を運ぶ補助に留める。`/wake/`への転送禁止とルート照合はディスパッチ側の責任とし（§11.5）、パス・クエリは正規化も独自の制限もせず形式だけを検査する（§11.2、§11.3）。ヘッダーの許可・拒否リストを廃止し、名前・値・順序・重複をHTTPの規則どおりに運ぶ（§11.4）。`location`は同じオリジン内の絶対パスに限る |
+| ETのエラー | クエリの違反は`invalid_path`、`EtRequest` / `EtResponse`の形式不正は`invalid_request`と明記（§11.6） |
+| 明確化 | Challengeの儀式とTranscriptのmodeの対応（§5.5）、時刻は2⁵³−1以下（§4.6）、ヘッダー全体の長さの数え方と`location`の範囲（§11.4）、平文長の上限の扱い（§8.7） |
+| テストベクター | 異常系の`expectedError`コード一覧とJSONでの表し方を定義（§16）。`spec/test-vectors/`に収録 |
+
+### 0.1 v0.3からv0.4への主な変更
 
 | 区分 | 変更 |
 |---|---|
@@ -193,7 +205,7 @@ LP(ascii("ab"), ε) = 00000002 6162 00000000   （16進）
 | TA Nonce | 16B（小文字16進32文字で表記） | CSPRNG。Operationごとに新規 |
 | IV | 12B | CSPRNG。暗号化ごとに新規 |
 | `keyEpoch` | `u32` | ログイン時0、KRごとに+1 |
-| 時刻 | `u64` | Unix時刻（ミリ秒） |
+| 時刻 | `u64` | Unix時刻（ミリ秒）。JSONでも扱えるよう、0〜2⁵³−1に限る（MUST）。範囲外は形式不正として拒否する |
 | ECDH公開鍵 | 65B | SEC1非圧縮形式（先頭`0x04`） |
 | ハッシュ値・MAC | 32B | 切り詰めない |
 | 通信方向 `dir` | `u8` | `0x01` = c2s（クライアント→サーバー）、`0x02` = s2c |
@@ -286,6 +298,7 @@ WebAuthn options.challenge = challenge（32B）
 | TA+KR | `th`（mode=0x02） | `ta` |
 
 - 上の表にない組み合わせ（両方ε、mode=0x01と`ta`の組み合わせなど）は拒否しなければならない（MUST）。
+- Challengeの入力にmodeは含まれない。儀式の種類は呼び出されたAPI（`/auth/complete`、`wake/kr/complete`、`wake/ta/approve`）で決まり、実装はその儀式に対応するmodeで`th`を計算しなければならない（MUST）。受信した値から儀式の種類を推測してはならない（MUST NOT）。
 - サーバーはChallengeを自分の保存値と受信したクライアント公開鍵から再計算する（MUST）。クライアントから受け取ったChallenge値を使ってはならない（MUST NOT）。
 - クライアントもChallengeを自分で計算する。サーバーはChallenge値を送らない。
 
@@ -670,7 +683,7 @@ AADを受信側で組み立て直してはならない（MUST NOT）。
 - 実装は、上限をどのように保証するかを文書化しなければならない（MUST）。具体的な管理方法は実装者が選ぶ。参考:
   - **クライアント（c2s）**: c2sを暗号化するのは正規クライアントのタブだけなので、正確に数えられる。IndexedDBのカウンターをブロック単位（例: 4096回）で予約すれば、タブ間の協調なしに上限値を管理できる。2²⁴回で次のWebAuthnの機会にKRを行い、実装の定めるハード上限（2²⁸回を推奨）で暗号化を止めてKRまたは再ログインを求める。
   - **サーバー（s2c）**: s2cの応答は、リプレイされた要求にも生成されるため、攻撃者が鮮度窓の間に増やせる。インスタンスごと・セッションごとのレート制限（認証タグが正しい要求をリプレイも含めて数える）と鍵世代の寿命を組み合わせ、`最大インスタンス数 × レート × 鍵世代の寿命 ≤ ハード上限`となるよう設定する。例: 10インスタンス × 40 req/s × 7日 ≈ 2.42×10⁸ < 2²⁸。
-- 暗号化する平文の長さには上限を設ける（MUST）。
+- 暗号化する平文の長さには上限を設ける（MUST）。受信側は、復号の前に`Wire`の長さから平文の長さを求めて上限と比較し、超えていれば`too_large`とする（MUST）。上限はサービスが決める。参考: ETを使う場合、ETの本文の上限に`EtRequest`の枠組み（パス、クエリ、ヘッダー）を足した値。
 
 ### 8.8 context
 
@@ -882,28 +895,26 @@ operationId = SHA-256(utf8(hashInput))                   // 32B
 ```
 
 - 区切りは改行（U+000A）1つ、ラベル`WAKE-TA-Nonce: `（コロンの後に空白1つ）である。
-- `hashInput`の末尾48バイトは常にこの固定形式のNonce行である。`content`は改行で終わらない（§10.4）ため、`hashInput`から`content`とNonceを一意に分離できる。
+- `hashInput`の末尾48バイトは常にこの固定形式のNonce行である。`content`は改行を含まない（§10.4）ため、`hashInput`の改行は区切りの1つだけであり、`content`とNonceを一意に分離できる。
 - ハッシュ入力には`hashInput`のUTF-8バイト列だけを使い、ラベルや非公開のパラメーターを加えない。一般的なSHA-256計算ツールで`operationId`を再現できるようにするためである。
 - 128bitのNonceを含むため、同じ`content`でも別の`operationId`になり、`operationId`から`content`を辞書攻撃で推測することもできない。
 
 **例（参考）**
 
+`content`の中の`\n`は改行ではなく、バックスラッシュと`n`の2文字である（§10.4）。
+
 ```text
 content:
-送金要求
-送金先: 山田太郎
-金額: 10000 JPY
+送金要求\n送金先: 山田太郎\n金額: 10000 JPY
 
 TA Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f
 
-hashInput（102バイト）:
-送金要求
-送金先: 山田太郎
-金額: 10000 JPY
+hashInput（104バイト）:
+送金要求\n送金先: 山田太郎\n金額: 10000 JPY
 WAKE-TA-Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f
 
 operationId:
-5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461
+1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74
 ```
 
 承認ページのURLは`https://example.com/approve/{operationId}`の形式を想定する（URLの形式は実装者が決める）。
@@ -914,29 +925,15 @@ operationId:
 
 | 規則 | 内容 |
 |---|---|
-| 符号化 | 正しい形式のUTF-8 |
+| 符号化 | 正しい形式のUTF-8（孤立サロゲートや不正なバイト列を含まない） |
 | 長さ | `utf8(content)`が1〜65,536バイト |
 | 正規化 | **NFCであること**（NFCでなければ拒否する。WAKEは変換しない） |
-| 改行 | 改行はLF（U+000A）のみ。CR（U+000D）、U+2028、U+2029は禁止 |
-| 先頭・末尾 | U+0020、U+000A、U+3000で始まったり終わったりしてはならない |
-| 行末 | LFの直前にU+0020やU+3000を置いてはならない |
+| 制御文字 | 一般カテゴリCcの文字（U+0000–U+001F、U+007F–U+009F）を含まない。**LF（U+000A）、CR、タブも禁止**であり、`content`は常に1行である |
+| 先頭・末尾 | U+0020、U+3000で始まったり終わったりしてはならない |
 
-**禁止するコードポイント**
-
-| 範囲 | 種類 |
-|---|---|
-| U+0000–U+0009、U+000B–U+001F | LF以外のC0制御文字（**タブを含む**） |
-| U+007F–U+009F | DELとC1制御文字 |
-| U+00AD | ソフトハイフン |
-| U+061C、U+200E、U+200F、U+202A–U+202E、U+2066–U+2069 | 双方向制御文字 |
-| U+200B、U+2060–U+2064、U+FEFF | ゼロ幅・不可視の書式文字 |
-| U+2028、U+2029 | 行区切り・段落区切り |
-| U+FFF9–U+FFFB | 行間注記 |
-| U+E000–U+F8FF、U+F0000–U+FFFFD、U+100000–U+10FFFD | 私用領域 |
-| U+E0000–U+E007F | タグ文字 |
-| U+FDD0–U+FDEF、各面のU+xFFFE・U+xFFFF | 非文字 |
-
-ZWNJ（U+200C）、ZWJ（U+200D）、異体字セレクターは、文字体系や絵文字に必要なため許可する。
+- Cc以外の文字（ゼロ幅文字、双方向制御文字、異体字セレクター、私用領域、絵文字など）は、プロファイルでは拒否しない。これらで文面の見た目を偽装されないよう、承認画面で可視化する（§10.11）。
+- 複数行の文面を表したい場合は、改行の代わりにバックスラッシュと`n`の2文字（`\n`）を使う。これは単なる文字であり、ハッシュの入力もこの2文字のままである。承認画面は、これを改行として表示する表示形式を選べるようにしてよい（§10.11）。
+- 実装者は、`content`に表示を紛らわしくする文字を入れないよう、自分のサーバーで文面を組み立てる段階で注意する（SHOULD）。
 
 ### 10.5 状態遷移
 
@@ -1130,7 +1127,11 @@ procedure Approve(session, req):
 2. `wake/ta/get`で`content`と`nonce`を取得する。
 3. `content`を文面プロファイル（§10.4）で検査し、`nonce`が小文字16進32文字であることを確認する。
 4. `hashInput`を組み立て、`SHA-256(utf8(hashInput))`がURLの`operationId`と一致することを確認する。一致しなければ承認を中止し、警告する。
-5. `hashInput`全体（Nonce行を含む）と`operationId`を表示する。等幅フォントを使い、改行が見える形で表示すること（SHOULD）。
+5. `hashInput`全体（Nonce行を含む）と`operationId`を表示する。等幅フォントを使うこと（SHOULD）。表示は次を満たさなければならない（MUST）。
+   - Cc以外の不可視・特殊な文字（ゼロ幅文字、双方向制御文字、書式文字、異体字セレクター、私用領域、非文字など）を、位置とコードポイントが分かる目立つ形で可視化する。
+   - 双方向制御文字が、可視化の印や周囲の表示を並べ替えないようにする（例: 各文字を独立した要素として左から右に並べる）。
+   - `\n`（バックスラッシュと`n`）を文字どおりに表示する形式を必ず用意する。改行として表示する形式に切り替えられるようにしてよい（MAY）。
+   - 表示の切り替えは見た目だけを変え、`content`・`hashInput`・`operationId`を変えてはならない。
 6. ユーザーが承認ボタンを押したら、`wake/ta/challenge`を呼ぶ。
 7. **手順1の`operationId`**と、受け取った`approvalId`・`approvalNonce`から`ta`とChallengeを計算し、WebAuthnを実行する。
 8. `wake/ta/approve`を送る。
@@ -1141,12 +1142,10 @@ procedure Approve(session, req):
 
 ユーザーは、表示された`hashInput`を外部のSHA-256計算ツールに入力し、結果がURLの`operationId`と一致することを確認できる。
 
-- `hashInput`には改行・空白も含まれる。末尾に改行を付けてはならない。
-- 手元のツールを推奨する。例（`echo`は末尾に改行を付けるため使わない）:
+- `hashInput`には区切りの改行1つと空白も含まれる。末尾に改行を付けてはならない。`content`の中の`\n`は2文字のまま入力する。
+- 手元のツールを推奨する。例（`echo`は末尾に改行を付けたり`\n`を解釈したりするため使わない）:
   ```bash
-  printf '%s' '送金要求
-  送金先: 山田太郎
-  金額: 10000 JPY
+  printf '%s' '送金要求\n送金先: 山田太郎\n金額: 10000 JPY
   WAKE-TA-Nonce: 3f9a1c7e5b2d4f6081a3c5e7092b4d6f' | shasum -a 256
   ```
 - 外部のWebサイトに入力することを前提とするため、`content`に秘密情報を含めてはならない（§14.2）。
@@ -1171,11 +1170,11 @@ contextは`wake-et`とする。WAKE-ETの利用は任意であり、実装者は
 ```text
 EtRequest  = LP(ascii("WAKE/1 et-req"), ascii(method), ascii(path), ascii(query), headers, body)
 EtResponse = LP(ascii("WAKE/1 et-res"), u16(status), headers, body)
-headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
+headers    = LP(name1, value1, name2, value2, …)     // nameはASCII、valueはHTTP field octets。0組なら ε
 ```
 
 - `method`: `GET` / `POST` / `PUT` / `PATCH` / `DELETE`（大文字）。
-- `query`: `?`を除いた生のクエリ文字列（空でもよい）。4,096バイト以下。
+- `query`: `?`を除いた生のクエリ文字列（空でもよい）。4,096バイト以下。URL queryの可視ASCII文字で構成し、`#`は含まない。パーセントエンコードは`%`に16進2桁を続ける（16進は大文字・小文字のどちらでもよい）。ETは値を正規化しない。
 - `body`: 生のバイト列。既定の上限は1MiB。
 - `status`: 200〜599。
 
@@ -1183,21 +1182,22 @@ headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
 
 パスは正規化せず、規則に合わないものは**拒否する**（MUST）。
 
-- `/`で始まり、2,048バイト以下で、RFC 3986のpcharと`/`だけで構成される。
-- パーセントエンコードは大文字の16進とする。`%2F`、`%5C`、`%00`、非予約文字のエンコードは拒否する。
-- `//`、`.`や`..`のセグメント、`#`を含むものは拒否する。
-- **登録済みのルートと完全に一致する場合だけ**ディスパッチする。`/wake/`で始まるパスへの転送は禁止する。外部URLへの転送はしない。
+- `/`で始まり、2,048バイト以下で、URL pathの可視ASCII文字で構成される。`?`と`#`は含めない。
+- パーセントエンコードは`%`に16進2桁を続ける。ETはパスを正規化せず、`.`/`..`セグメント、連続する`/`、エンコードされた区切り文字や非予約文字を独自に拒否しない。
+
+ETの符号化はこの形式の検査だけを行い、どのパスに振り分けるかには関与しない。振り分けの規則は§11.5に従う。
 
 ### 11.4 ヘッダー
 
-- 名前は小文字のASCIIとする。値は0x20〜0x7EとTAB（0x09）だけで構成する（CRとLFは拒否する）。ヘッダー全体は8KiB以下とする。
-- **常に拒否する要求ヘッダー**: `host`、`cookie`、`authorization`、`proxy-*`、`connection`、`keep-alive`、`transfer-encoding`、`te`、`trailer`、`upgrade`、`content-length`、`expect`、`forwarded`、`x-forwarded-*`、`x-real-ip`、`via`、`origin`、`sec-*`、`x-wake-*`
-- **既定で許可する要求ヘッダー**: `accept`、`accept-language`、`content-type`、`content-language`、`if-match`、`if-none-match`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`、および実装者が設定したもの
-- **既定で許可する応答ヘッダー**: `content-type`、`content-language`、`content-disposition`、`etag`、`last-modified`、`cache-control`、`retry-after`、`location`（相対パスのみ）、および実装者が設定したもの。`set-cookie`は拒否する。
+- 名前はRFC 9110のtoken（ASCII）とし、受け取った大文字・小文字を保つ。名前の比較は大文字・小文字を区別しない。値はHTTP field octetsとして扱う。ASCIIではTAB、SP〜VCHARをそのまま符号化し、obs-textはU+0080〜U+00FFを対応する1バイトに写す（UTF-8へ変換しない）。C0制御文字（TABを除く）とDEL、U+00FFを超える値は拒否する。ヘッダー全体は8KiB以下とする。長さは各ヘッダーの名前と値のバイト数の合計で数える（LPの長さ欄は含めない）。
+- 同じ名前のヘッダーが複数あってもよい。名前・値・順序を保って運び、HTTPのフィールドごとの規則（RFC 9110 §5.3）に従って解釈する。`Set-Cookie`のように結合できないフィールドは別々の行として保持する。`content-type`、`content-disposition`、`etag`、`last-modified`、`location`、`retry-after`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`の重複は拒否する（MUST）。要求の`host`はHTTP/1.1の規則（RFC 9112 §3.2）に従い、複数行を拒否する（MUST）。
+- HTTP field nameの独自allowlist/denylistは設けない。
+- `location`の値は、同じオリジン内の絶対パス（RFC 3986のpath-absolute。`/`で始まり`//`で始まらない）と、任意の`?`クエリに限る（MUST）。使える文字はpchar、`/`、`?`とパーセントエンコードだけで、バックスラッシュは含まない（ブラウザが`/\`をオーソリティとして扱う場合があるため）。スキームやオーソリティを含む値、相対参照（`./`や`../`、パス名だけのもの）は拒否する。ETで運ぶ応答が別のオリジンへ誘導することを防ぐためである。
 
 ### 11.5 ディスパッチと認証情報
 
 - 内部APIはプロセス内のルートハンドラーとして呼び出す。HTTPプロキシやURLフェッチの機能にしてはならない（MUST NOT）。
+- 振り分けはディスパッチを行うアプリケーション側の責任である。**登録済みのルートと完全に一致する場合だけ**ディスパッチし、それ以外は`route_not_found`とする（MUST）。`/wake/`で始まるWAKE内部のエンドポイントへ転送してはならない（MUST NOT）。外部URLへの転送はしない。
 - 認証情報`{userId, sessionId, epoch, credentialId, authTime, requestId}`は、ヘッダーではなくプロセス内のオブジェクト（フレームワークのcontextなど）で渡す（MUST）。
 - WAKE-ET経由でだけ呼ぶルートは、外部ネットワークから直接到達できないようにする（SHOULD）。
 
@@ -1207,7 +1207,8 @@ headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
 
 | status | code | 事象 |
 |---|---|---|
-| 400 | `invalid_path` / `invalid_header` / `invalid_method` | 規則違反 |
+| 400 | `invalid_path` / `invalid_header` / `invalid_method` | 規則違反（クエリの違反は`invalid_path`とする） |
+| 400 | `invalid_request` | `EtRequest`または`EtResponse`の形式不正（LPの不正、ラベルの不一致、ヘッダーの組が奇数、不正なstatusなど。§12.4） |
 | 404 | `route_not_found` | 未登録のルート |
 | 413 | `too_large` | サイズ超過 |
 
@@ -1374,6 +1375,12 @@ headers    = LP(name1, value1, name2, value2, …)     // 0組なら ε
 
 - リプレイで問題が生じるAPIには、冪等キーなどの対策を実装すること。
 
+**WAKE-ETで運ぶヘッダー**
+
+- ETはHTTPのリクエスト・レスポンスの形式に従って符号化・復号する。内容の意味や用途、信頼性の判断には関与しない。ETの中のヘッダーはクライアントが自由に指定した値であり、リバースプロキシによる上書きや除去を受けない。どのヘッダーを信頼するかは実装者が決める。
+- 例えば`x-forwarded-for`、`forwarded`、`x-real-ip`、`host`を接続元やホストの判定に使うと、IP制限やログを偽装され得る。これらは外側のHTTP要求から得ることを勧める。
+- 利用者の判定には、`cookie`や`authorization`ではなく§11.5の認証情報を使うことを勧める。
+
 ### 14.3 レート制限
 
 次の操作にレート制限を設けなければならない（MUST）。
@@ -1443,6 +1450,28 @@ SELECT session_id, ?7, ?8, ?9, ...
 
 異常系は`"expectedError": "<code>"`を持つ。
 
+**JSONでの表し方**
+
+- バイト列は小文字の16進文字列とする。空のバイト列（ε）は空文字列`""`とする。
+- テキスト（`content`、`hashInput`、context、パスなど）はJSON文字列とする。
+- 整数はJSONの数値とする。
+
+**`expectedError`のコード**
+
+テストベクター用のコードであり、§12の通信上のエラーコードとは別のものである（一部は同じ名前を使う）。実装は内部のエラーをこれらのコードに対応付けて照合する。
+
+| code | 対象 |
+|---|---|
+| `bad_request` | LPや固定長フィールドの不正、ラベルの不一致、`MsgHeader`の不正、未定義のChallengeの組み合わせ、Transcriptのmodeとepochの不整合。ETの`EtRequest` / `EtResponse`構造不正には使わず、`invalid_request`とする（§11.6） |
+| `invalid_request` | ETの`EtRequest` / `EtResponse`構造不正（LP、ラベル、フィールド数/status）。ET queryの違反は`invalid_path`とする（§11.6） |
+| `reauth` | AES-GCMの認証失敗（タグやAADの改ざん） |
+| `too_large` | 平文の長さの上限超過（§8.7） |
+| `invalid_base64url` | 正準形でないBase64url |
+| `invalid_utf8` | 不正なUTF-8 |
+| `invalid_public_key` | ECDH公開鍵の形式不正、曲線上にない点 |
+| `invalid_content` | 文面プロファイル（§10.4）の違反 |
+| `invalid_method` / `invalid_path` / `invalid_header` / `invalid_request` | ETの規則違反（§11.6） |
+
 **正常系（必須）**
 
 | suite | 内容 |
@@ -1454,7 +1483,7 @@ SELECT session_id, ?7, ?8, ?9, ...
 | `hkdf` | 4つの鍵 |
 | `finished` | clientFinished、serverFinished |
 | `msg` | `MsgHeader`の符号化、AES-GCMの暗号化（鍵とIVを固定）、c2sとs2c |
-| `ta` | `hashInput`、`operationId`（日本語、絵文字、ZWJを含む例）、`ta` |
+| `ta` | `hashInput`、`operationId`（日本語、絵文字、ZWJ、`\n`の2文字を含む例）、`ta` |
 | `et` | `EtRequest`、`EtResponse` |
 | `base64url` | 正準形 |
 
@@ -1465,10 +1494,10 @@ SELECT session_id, ?7, ?8, ?9, ...
 | `base64url` | `=`付き、末尾ビットが0でない、文字集合外 |
 | `ecdh` | 圧縮点、ハイブリッド形式、曲線上にない点、長さ不正 |
 | `utf8` | 不正なバイト列、サロゲートの符号化 |
-| `ta-profile` | NFCでない、CR、タブ、双方向制御文字、末尾の空白・改行、行末の空白 |
+| `ta-profile` | NFCでない、LF、CR、タブ、DEL、C1制御文字、先頭・末尾の空白、空文字列 |
 | `msg` | 余分なバイト、固定長の不一致、ラベル不一致、`dir`の逆転、タグの改ざん、AADの1バイト改ざん、context外の文字 |
 | `challenge` | 未定義の組み合わせ |
-| `et` | 不正なパス、禁止ヘッダー、CRLFを含む値 |
+| `et` | 不正なパス・クエリ、単一値フィールドの重複、不正な`location`、CRLFを含む値 |
 
 ---
 
@@ -1559,10 +1588,7 @@ SELECT session_id, ?7, ?8, ?9, ...
 `content`の例:
 
 ```text
-パスキーの追加
-デバイス名: Pixel 9
-Credential ID: 8m3Qp…（Base64url）
-公開鍵SHA-256: 7c2e91d0a4b85f13…
+パスキーの追加\nデバイス名: Pixel 9\nCredential ID: 8m3Qp…（Base64url）\n公開鍵SHA-256: 7c2e91d0a4b85f13…
 ```
 
 承認待ちのcredentialは、承認が確定するまでどの儀式でも受理されない（§6.5）。そのため、承認待ちのcredentialが自分自身の追加を承認することはできない。
@@ -1575,8 +1601,8 @@ Credential ID: 8m3Qp…（Base64url）
 {
   "format": "WAKE/1 ta-bundle",
   "rpId": "example.com",
-  "operationId": "5f1a2b8b66ca83af403465063939c4217af81e4d9e6e90eb13194bcefda4b461",
-  "content": "送金要求\n送金先: 山田太郎\n金額: 10000 JPY",
+  "operationId": "1140095b9147435cc75d76b00be2938ebd69885f938afdcc02337c925cedfd74",
+  "content": "送金要求\\n送金先: 山田太郎\\n金額: 10000 JPY",
   "nonce": "3f9a1c7e5b2d4f6081a3c5e7092b4d6f",
   "approval": {
     "approvalId": "<base64url 16B>",
