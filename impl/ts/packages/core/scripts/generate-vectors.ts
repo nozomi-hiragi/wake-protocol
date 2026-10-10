@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type Bytes,
+  asIv,
+  asRequestId,
+  asSessionId,
+  asSharedSecret,
+  asTranscriptHash,
   ascii,
   concat,
   deriveKeys,
@@ -106,7 +111,7 @@ function rawHeader(f: {
     f.sid,
     u32(f.epoch),
     f.rid,
-    u64(f.issuedAt),
+    u64(BigInt(f.issuedAt)),
     f.context,
     f.iv,
   );
@@ -123,21 +128,21 @@ async function msgCases(): Promise<Case[]> {
   const CONTEXT = "POST /api/transfer";
   const c2sHeader: MsgHeader = {
     dir: 1,
-    sessionId: fromHex(SESSION_1),
+    sessionId: asSessionId(fromHex(SESSION_1)),
     epoch: 1,
-    requestId: fromHex(REQUEST_ID),
+    requestId: asRequestId(fromHex(REQUEST_ID)),
     issuedAt: TIME_SERVER,
     context: CONTEXT,
-    iv: fromHex(IV_C2S),
+    iv: asIv(fromHex(IV_C2S)),
   };
   const s2cHeader: MsgHeader = {
     dir: 2,
-    sessionId: fromHex(SESSION_1),
+    sessionId: asSessionId(fromHex(SESSION_1)),
     epoch: 1,
-    requestId: fromHex(REQUEST_ID),
+    requestId: asRequestId(fromHex(REQUEST_ID)),
     issuedAt: TIME_SERVER + 500,
     context: "wake-et",
-    iv: fromHex(IV_S2C),
+    iv: asIv(fromHex(IV_S2C)),
   };
   const plainC2s = hex(utf8('{"ok":true}'));
   const plainS2c = hex(utf8('{"status":"ok"}'));
@@ -297,7 +302,7 @@ function hdrInput(h: {
 
 async function buildSuites(): Promise<SuiteFile[]> {
   const ecdhZero = { privateKey: A_D, publicKey: A_PUB, peerPublicKey: B_PUB };
-  const keys = await deriveKeys(fromHex(SS_NORMAL), fromHex(HKDF_TH));
+  const keys = await deriveKeys(asSharedSecret(fromHex(SS_NORMAL)), asTranscriptHash(fromHex(HKDF_TH)));
   const clientFinishedInput = { kind: "client", fkC: hex(keys.fkC), th: HKDF_TH };
   const clientFinishedValue = (await runCase("finished", clientFinishedInput)).clientFinished as string;
 

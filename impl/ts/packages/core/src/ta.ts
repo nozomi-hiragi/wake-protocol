@@ -1,7 +1,8 @@
 // Spec §10.3–10.4: content profile, hashInput and operationId (WAKE-TA).
-import { type Bytes, hex, utf8 } from "./encoding.ts";
+import { fromHex, hex, utf8 } from "./encoding.ts";
 import { sha256 } from "./crypto.ts";
 import { fail } from "./errors.ts";
+import { type OperationId, type TaNonce, asOperationId } from "./types.ts";
 
 const MAX_CONTENT_BYTES = 65536;
 
@@ -46,17 +47,22 @@ export function checkContent(content: string): void {
   }
 }
 
-export function hashInput(content: string, nonce: Bytes): string {
-  if (nonce.length !== 16) fail("bad_request", "TA nonce must be 16 bytes");
+export function hashInput(content: string, nonce: TaNonce): string {
   return `${content}\nWAKE-TA-Nonce: ${hex(nonce)}`;
 }
 
-export async function operationId(hashInputStr: string): Promise<Bytes> {
-  return sha256(utf8(hashInputStr));
+export async function operationId(hashInputStr: string): Promise<OperationId> {
+  return asOperationId(await sha256(utf8(hashInputStr)));
+}
+
+/** External form of operationId: exactly 64 lowercase hex characters (§4.5). */
+export function parseOperationIdHex(s: string): OperationId {
+  if (!/^[0-9a-f]{64}$/.test(s)) fail("bad_request", "operationId must be 64 lowercase hex characters");
+  return asOperationId(fromHex(s));
 }
 
 /** Validates content and computes the operation identity (§10.2 step 2–3). */
-export async function createOperationIdentity(content: string, nonce: Bytes): Promise<{ hashInput: string; operationId: string }> {
+export async function createOperationIdentity(content: string, nonce: TaNonce): Promise<{ hashInput: string; operationId: string }> {
   checkContent(content);
   const hi = hashInput(content, nonce);
   return { hashInput: hi, operationId: hex(await operationId(hi)) };

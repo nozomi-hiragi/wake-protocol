@@ -4,8 +4,6 @@ import assert from "node:assert/strict";
 import {
   DIR_C2S,
   DIR_S2C,
-  EMPTY,
-  MODE_LOGIN,
   WakeError,
   aesKey,
   clientFinished,
@@ -13,10 +11,13 @@ import {
   ecdh,
   generateEphemeral,
   open,
-  randomBytes,
+  newExchangeId,
+  newRequestId,
+  newServerNonce,
+  newSessionId,
   seal,
   serverFinished,
-  transcriptHash,
+  loginTranscriptHash,
   utf8,
   verifyClientFinished,
   verifyServerFinished,
@@ -27,17 +28,14 @@ async function expectCode(p: Promise<unknown>, code: string): Promise<void> {
 }
 
 describe("login round trip", async () => {
-  const exchangeId = randomBytes(16);
-  const sessionId = randomBytes(32);
-  const serverNonce = randomBytes(32);
+  const exchangeId = newExchangeId();
+  const sessionId = newSessionId();
+  const serverNonce = newServerNonce();
   const client = await generateEphemeral();
   const server = await generateEphemeral();
-  const th = await transcriptHash({
-    mode: MODE_LOGIN,
+  const th = await loginTranscriptHash({
     exchangeId,
     sessionId,
-    epoch: 0,
-    prevTh: EMPTY,
     serverNonce,
     serverPublicKey: server.publicKey,
     clientPublicKey: client.publicKey,
@@ -62,7 +60,7 @@ describe("login round trip", async () => {
     const sf = await serverFinished(k.fkS, input);
     assert.equal(await verifyServerFinished(k.fkS, input, sf), true);
 
-    const badMac = Uint8Array.from(cf);
+    const badMac = Uint8Array.from(cf) as typeof cf;
     badMac[0]! ^= 1;
     assert.equal(await verifyClientFinished(k.fkC, th, badMac), false);
     assert.equal(await verifyServerFinished(k.fkS, { ...input, serverTime: input.serverTime + 1 }, sf), false);
@@ -81,7 +79,7 @@ describe("login round trip", async () => {
       dir: DIR_C2S,
       sessionId,
       epoch: 0,
-      requestId: randomBytes(16),
+      requestId: newRequestId(),
       issuedAt: 1767225600000,
       context: "POST /api/transfer",
     } as const;
@@ -114,7 +112,7 @@ describe("login round trip", async () => {
       dir: DIR_S2C,
       sessionId,
       epoch: 0,
-      requestId: randomBytes(16),
+      requestId: newRequestId(),
       issuedAt: 1767225600500,
       context: "wake-et",
     }, utf8('{"status":"ok"}'));

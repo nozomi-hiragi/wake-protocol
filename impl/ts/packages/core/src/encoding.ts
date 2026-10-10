@@ -26,11 +26,11 @@ export function u32(x: number): Bytes {
   return b;
 }
 
-/** Accepts safe integers only, matching the I-JSON limit in §4.8. */
-export function u64(x: number): Bytes {
-  if (!Number.isSafeInteger(x) || x < 0) fail("invalid_integer", "u64 out of range");
+/** Full range 0..2^64-1. Time usage limits live in time.ts. */
+export function u64(x: bigint): Bytes {
+  if (typeof x !== "bigint" || x < 0n || x > 0xffffffffffffffffn) fail("invalid_integer", "u64 out of range");
   const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigUint64(0, BigInt(x));
+  new DataView(b.buffer).setBigUint64(0, x);
   return b;
 }
 
@@ -49,11 +49,9 @@ export function readU32(b: Bytes): number {
   return new DataView(b.buffer, b.byteOffset, 4).getUint32(0);
 }
 
-export function readU64(b: Bytes): number {
+export function readU64(b: Bytes): bigint {
   if (b.length !== 8) fail("bad_request", "u64 length");
-  const v = new DataView(b.buffer, b.byteOffset, 8).getBigUint64(0);
-  if (v > BigInt(Number.MAX_SAFE_INTEGER)) fail("bad_request", "u64 exceeds 2^53-1");
-  return Number(v);
+  return new DataView(b.buffer, b.byteOffset, 8).getBigUint64(0);
 }
 
 // --- byte helpers ---
@@ -209,9 +207,9 @@ export function hex(b: Uint8Array): string {
   return s;
 }
 
-/** Lowercase-only hex, as the API requires for operationId. */
+/** Accepts upper- and lowercase; output of hex() is always lowercase. */
 export function fromHex(s: string): Bytes {
-  if (s.length % 2 !== 0 || !/^[0-9a-f]*$/.test(s)) fail("invalid_hex");
+  if (s.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(s)) fail("invalid_hex");
   const out = new Uint8Array(s.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16);
   return out;

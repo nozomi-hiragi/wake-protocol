@@ -14,8 +14,10 @@ import {
   u64,
   u8,
 } from "./encoding.ts";
-import { aesGcmDecrypt, aesGcmEncrypt, randomBytes } from "./crypto.ts";
+import { aesGcmDecrypt, aesGcmEncrypt, newIv } from "./crypto.ts";
 import { fail } from "./errors.ts";
+import { timeToU64, u64ToTime } from "./time.ts";
+import { type Iv, type RequestId, type SessionId, asIv, asRequestId, asSessionId } from "./types.ts";
 
 export const DIR_C2S = 0x01;
 export const DIR_S2C = 0x02;
@@ -27,12 +29,12 @@ const MAX_HEADER = 371;
 
 export interface MsgHeader {
   dir: typeof DIR_C2S | typeof DIR_S2C;
-  sessionId: Bytes; // 32B
+  sessionId: SessionId;
   epoch: number;
-  requestId: Bytes; // 16B
+  requestId: RequestId;
   issuedAt: number; // ms
   context: string; // 1..256 bytes of 0x20..0x7E
-  iv: Bytes; // 12B
+  iv: Iv;
 }
 
 export function checkContext(context: string): void {
@@ -45,11 +47,8 @@ export function checkContext(context: string): void {
 
 export function encodeHeader(h: MsgHeader): Bytes {
   if (h.dir !== DIR_C2S && h.dir !== DIR_S2C) fail("bad_request", "dir");
-  if (h.sessionId.length !== 32 || h.requestId.length !== 16 || h.iv.length !== 12) {
-    fail("bad_request", "fixed-length field");
-  }
   checkContext(h.context);
-  return lp(LABEL, u8(h.dir), h.sessionId, u32(h.epoch), h.requestId, u64(h.issuedAt), ascii(h.context), h.iv);
+  return lp(LABEL, u8(h.dir), h.sessionId, u32(h.epoch), h.requestId, u64(timeToU64(h.issuedAt)), ascii(h.context), h.iv);
 }
 
 export interface ParsedWire {
@@ -75,12 +74,12 @@ export function parseWire(wire: Uint8Array): ParsedWire {
   return {
     header: {
       dir,
-      sessionId: f[2]!,
+      sessionId: asSessionId(f[2]!),
       epoch: readU32(f[3]!),
-      requestId: f[4]!,
-      issuedAt: readU64(f[5]!),
+      requestId: asRequestId(f[4]!),
+      issuedAt: u64ToTime(readU64(f[5]!)),
       context,
-      iv: f[7]!,
+      iv: asIv(f[7]!),
     },
     headerBytes,
     sealed: wire.slice(4 + hlen),
@@ -91,14 +90,10 @@ export type SealInput = Omit<MsgHeader, "iv">;
 
 /** §8.3 Seal. The IV is always generated here, never taken from the caller. */
 export async function seal(key: CryptoKey, h: SealInput, plaintext: Bytes): Promise<Bytes> {
-  return sealWithIv(key, { ...h, iv: randomBytes(12) }, plaintext);
-}
-
-/** Fixed-IV variant for test vectors only. Do not use for real traffic. */
-export async function sealWithIv(key: CryptoKey, h: MsgHeader, plaintext: Bytes): Promise<Bytes> {
-  const H = encodeHeader(h);
-  const C = await aesGcmEncrypt(key, h.iv, plaintext, H);
-  return concat(u32(H.length), H, C);
+  const iv = newIv();
+  const header = encodeHeader({ ...h, iv });
+  const C = await aesGcmEncrypt(key, iv, plaintext, header);
+  return concat(u32(header.length), header, C);
 }
 
 /**

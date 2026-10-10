@@ -50,11 +50,12 @@ describe("spec/test-vectors", () => {
               assert.equal(r.path, v.input.path);
               assert.equal(r.query, v.input.query);
               assert.equal(hex(r.body), v.input.body);
-              assert.equal(r.headers.length, (v.input.headers as unknown[]).length);
+              assert.deepEqual(r.headers, v.input.headers);
             } else {
               const r = decodeEtResponse(enc);
               assert.equal(r.status, v.input.status);
               assert.equal(hex(r.body), v.input.body);
+              assert.deepEqual(r.headers, v.input.headers);
             }
           }
         });
