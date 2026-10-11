@@ -1,10 +1,14 @@
+import { hex } from "@scure/base";
 // End-to-end: KX key agreement, Finished, WAKE-SM seal/open, and tamper detection.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  Bytes,
   DIR_C2S,
   DIR_S2C,
+  type KeySchedule,
   WakeError,
+  asClientFinishedMac,
   aesKey,
   clientFinished,
   deriveKeys,
@@ -18,14 +22,17 @@ import {
   seal,
   serverFinished,
   loginTranscriptHash,
-  utf8,
   verifyClientFinished,
   verifyServerFinished,
 } from "../src/index.ts";
+import { utf8ToBytes } from "@wake-protocol/codec";
 
 async function expectCode(p: Promise<unknown>, code: string): Promise<void> {
   await assert.rejects(p, (e: unknown) => e instanceof WakeError && e.code === code);
 }
+
+const hexAll = (k: KeySchedule): Record<string, string> =>
+  Object.fromEntries(Object.entries(k).map(([name, v]) => [name, hex.encode(v.toUint8Array())]));
 
 describe("login round trip", async () => {
   const exchangeId = newExchangeId();
@@ -44,10 +51,10 @@ describe("login round trip", async () => {
   it("both sides agree on the shared secret and the derived keys", async () => {
     const ssC = await ecdh(client.privateKey, server.publicKey);
     const ssS = await ecdh(server.privateKey, client.publicKey);
-    assert.deepEqual(ssC, ssS);
+    assert.equal(hex.encode(ssC.toUint8Array()), hex.encode(ssS.toUint8Array()));
     const kc = await deriveKeys(ssC, th);
     const ks = await deriveKeys(ssS, th);
-    assert.deepEqual(kc, ks);
+    assert.deepEqual(hexAll(kc), hexAll(ks));
   });
 
   it("client and server Finished verify, and tampering makes them fail", async () => {
@@ -60,9 +67,9 @@ describe("login round trip", async () => {
     const sf = await serverFinished(k.fkS, input);
     assert.equal(await verifyServerFinished(k.fkS, input, sf), true);
 
-    const badMac = Uint8Array.from(cf) as typeof cf;
+    const badMac = cf.toUint8Array();
     badMac[0]! ^= 1;
-    assert.equal(await verifyClientFinished(k.fkC, th, badMac), false);
+    assert.equal(await verifyClientFinished(k.fkC, th, asClientFinishedMac(badMac)), false);
     assert.equal(await verifyServerFinished(k.fkS, { ...input, serverTime: input.serverTime + 1 }, sf), false);
     assert.equal(await verifyServerFinished(k.fkS, { ...input, idleTimeoutSec: 1801 }, sf), false);
   });
@@ -83,19 +90,19 @@ describe("login round trip", async () => {
       issuedAt: 1767225600000,
       context: "POST /api/transfer",
     } as const;
-    const plaintext = utf8('{"amount":10000}');
+    const plaintext = new Bytes(utf8ToBytes('{"amount":10000}'));
     const wire = await seal(sendKey, header, plaintext);
 
     const got = await open(recvKey, wire, DIR_C2S);
-    assert.deepEqual(got.plaintext, plaintext);
-    assert.deepEqual(got.header.sessionId, sessionId);
+    assert.equal(hex.encode(got.plaintext.toUint8Array()), hex.encode(plaintext.toUint8Array()));
+    assert.equal(hex.encode(got.header.sessionId.toUint8Array()), hex.encode(sessionId.toUint8Array()));
     assert.equal(got.header.context, "POST /api/transfer");
 
-    const tagFlip = Uint8Array.from(wire);
+    const tagFlip = wire.toUint8Array();
     tagFlip[tagFlip.length - 1]! ^= 1;
     await expectCode(open(recvKey, tagFlip, DIR_C2S), "reauth");
 
-    const bodyFlip = Uint8Array.from(wire);
+    const bodyFlip = wire.toUint8Array();
     bodyFlip[wire.length - 17]! ^= 1;
     await expectCode(open(recvKey, bodyFlip, DIR_C2S), "reauth");
 
@@ -115,8 +122,8 @@ describe("login round trip", async () => {
       requestId: newRequestId(),
       issuedAt: 1767225600500,
       context: "wake-et",
-    }, utf8('{"status":"ok"}'));
+    }, new Bytes(utf8ToBytes('{"status":"ok"}')));
     const got = await open(await aesKey(kc.kS2c), wire, DIR_S2C);
-    assert.equal(new TextDecoder().decode(got.plaintext), '{"status":"ok"}');
+    assert.equal(new TextDecoder().decode(got.plaintext.toUint8Array()), '{"status":"ok"}');
   });
 });

@@ -1,7 +1,17 @@
 // v0.5 rule changes: TA profile (§10.4) and ET headers/query/location (§11.2–11.4).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { WakeError, checkContent, checkPath, checkQuery, checkResponseHeaders, checkRequestHeaders, decodeEtResponse, encodeEtResponse } from "../src/index.ts";
+import {
+  Bytes,
+  WakeError,
+  checkContent,
+  checkPath,
+  checkQuery,
+  checkResponseHeaders,
+  checkRequestHeaders,
+  decodeEtResponse,
+  encodeEtResponse,
+} from "../src/index.ts";
 
 const code = (fn: () => void): string | undefined => {
   try {
@@ -13,7 +23,7 @@ const code = (fn: () => void): string | undefined => {
   return undefined;
 };
 
-const lpFields = (wire: Uint8Array): Uint8Array[] => {
+const encodeU32LengthPrefixedFields = (wire: Uint8Array): Uint8Array[] => {
   const fields: Uint8Array[] = [];
   const view = new DataView(wire.buffer, wire.byteOffset, wire.byteLength);
   let offset = 0;
@@ -71,8 +81,8 @@ describe("ET v0.5", () => {
   });
   it("round-trips field case, obs-text bytes, order, and separate Set-Cookie fields", () => {
     const headers = [["X-Trace-Id", "opaque-\u00e9"], ["Set-Cookie", "a=1"], ["set-cookie", "b=2"]] as const;
-    const wire = encodeEtResponse({ status: 200, headers, body: new Uint8Array() });
-    const wireHeaders = lpFields(lpFields(wire)[2]!);
+    const wire = encodeEtResponse({ status: 200, headers, body: new Bytes([]) });
+    const wireHeaders = encodeU32LengthPrefixedFields(encodeU32LengthPrefixedFields(wire.toUint8Array())[2]!);
     assert.deepEqual(Array.from(wireHeaders[1]!), [111, 112, 97, 113, 117, 101, 45, 0xe9]);
     assert.deepEqual(decodeEtResponse(wire).headers, headers);
     assert.equal(code(() => checkResponseHeaders([["X-Opaque", "\u0085"]])), undefined);

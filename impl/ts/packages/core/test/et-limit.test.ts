@@ -1,9 +1,15 @@
 // ET bodyLimit validation (§11.2): encodeEtRequest and decodeEtRequest reject a malformed limit.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { WakeError, decodeEtRequest, encodeEtRequest, type EtRequest } from "../src/index.ts";
+import {
+  Bytes,
+  WakeError,
+  decodeEtRequest,
+  encodeEtRequest,
+  type EtRequest,
+} from "../src/index.ts";
 
-const req: EtRequest = { method: "POST", path: "/api/limit", query: "", headers: [], body: new Uint8Array(4) };
+const req: EtRequest = { method: "POST", path: "/api/limit", query: "", headers: [], body: new Bytes(new Uint8Array(4)) };
 const isInvalidOption = (e: unknown) => e instanceof WakeError && e.code === "invalid_option";
 
 describe("bodyLimit validation (§11.2)", () => {
@@ -16,8 +22,8 @@ describe("bodyLimit validation (§11.2)", () => {
   }
 
   it("a bodyLimit of 0 accepts an empty body and round-trips", () => {
-    const empty: EtRequest = { ...req, body: new Uint8Array(0) };
+    const empty: EtRequest = { ...req, body: new Bytes(new Uint8Array(0)) };
     const bytes = encodeEtRequest(empty, { bodyLimit: 0 });
-    assert.deepEqual(decodeEtRequest(bytes, { bodyLimit: 0 }).body, new Uint8Array(0));
+    assert.ok(decodeEtRequest(bytes, { bodyLimit: 0 }).body.equals(new Bytes([])));
   });
 });

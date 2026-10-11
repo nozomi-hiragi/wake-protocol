@@ -1,30 +1,27 @@
 // Deterministic generator for spec/test-vectors/*.json (spec §16).
-// Usage: node scripts/generate-vectors.ts [outDir]
 // All inputs are fixed hex constants below; re-running reproduces the files byte for byte.
+import { hex } from "@scure/base";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
-  type Bytes,
   asIv,
   asRequestId,
   asSessionId,
   asSharedSecret,
   asTranscriptHash,
-  ascii,
-  concat,
   deriveKeys,
   encodeHeader,
-  fromHex,
-  hex,
   type MsgHeader,
-  lp,
-  u32,
-  u64,
-  u8,
-  utf8,
+  Bytes,
   WakeError,
-} from "../src/index.ts";
+} from "@wake-protocol/core";
+import { asciiToBytes, encodeU32LengthPrefixed, utf8ToBytes } from "@wake-protocol/codec";
+import {
+  Byte,
+  Byte4,
+  Byte8,
+} from "@wake-protocol/bytes";
 import { type Obj, SUITES, runCase } from "./vector-ops.ts";
 
 export const DEFAULT_VECTOR_DIR = fileURLToPath(new URL("../../../../../spec/test-vectors/", import.meta.url));
@@ -98,27 +95,27 @@ export interface SuiteFile {
 function rawHeader(f: {
   label?: string;
   dir?: number;
-  sid: Bytes;
+  sid: Uint8Array;
   epoch: number;
-  rid: Bytes;
+  rid: Uint8Array;
   issuedAt: number;
-  context: Bytes;
-  iv: Bytes;
+  context: Uint8Array;
+  iv: Uint8Array;
 }): Bytes {
-  return lp(
-    ascii(f.label ?? "WAKE/1 msg"),
-    u8(f.dir ?? 1),
+  return new Bytes(encodeU32LengthPrefixed(
+    (asciiToBytes(f.label ?? "WAKE/1 msg")),
+    (new Byte(f.dir ?? 1)).toUint8Array(),
     f.sid,
-    u32(f.epoch),
+    (new Byte4(f.epoch)).toUint8Array(),
     f.rid,
-    u64(BigInt(f.issuedAt)),
+    (new Byte8(BigInt(f.issuedAt))).toUint8Array(),
     f.context,
     f.iv,
-  );
+  ));
 }
 
 function wireOf(header: Bytes, ciphertext: Bytes): Bytes {
-  return concat(u32(header.length), header, ciphertext);
+  return Bytes.concat(new Byte4(header.length), header, ciphertext);
 }
 
 /** Two-character hex of a single byte. */
@@ -128,24 +125,24 @@ async function msgCases(): Promise<Case[]> {
   const CONTEXT = "POST /api/transfer";
   const c2sHeader: MsgHeader = {
     dir: 1,
-    sessionId: asSessionId(fromHex(SESSION_1)),
+    sessionId: asSessionId(hex.decode(SESSION_1)),
     epoch: 1,
-    requestId: asRequestId(fromHex(REQUEST_ID)),
+    requestId: asRequestId(hex.decode(REQUEST_ID)),
     issuedAt: TIME_SERVER,
     context: CONTEXT,
-    iv: asIv(fromHex(IV_C2S)),
+    iv: asIv(hex.decode(IV_C2S)),
   };
   const s2cHeader: MsgHeader = {
     dir: 2,
-    sessionId: asSessionId(fromHex(SESSION_1)),
+    sessionId: asSessionId(hex.decode(SESSION_1)),
     epoch: 1,
-    requestId: asRequestId(fromHex(REQUEST_ID)),
+    requestId: asRequestId(hex.decode(REQUEST_ID)),
     issuedAt: TIME_SERVER + 500,
     context: "wake-et",
-    iv: asIv(fromHex(IV_S2C)),
+    iv: asIv(hex.decode(IV_S2C)),
   };
-  const plainC2s = hex(utf8('{"ok":true}'));
-  const plainS2c = hex(utf8('{"status":"ok"}'));
+  const plainC2s = hex.encode((utf8ToBytes('{"ok":true}')));
+  const plainS2c = hex.encode((utf8ToBytes('{"status":"ok"}')));
 
   // A valid c2s wire, used as the base for the negative cases.
   const baseWire = await runCase("msg", {
@@ -167,11 +164,11 @@ async function msgCases(): Promise<Case[]> {
     ...hdrInput(c2sHeader),
     plaintext: "00".repeat(17),
   });
-  const tamperedLongWire = fromHex(longWire.wire as string);
+  const tamperedLongWire = hex.decode(longWire.wire as string);
   tamperedLongWire[tamperedLongWire.length - 1]! ^= 0x01;
-  const base = fromHex(baseWire.wire as string);
+  const base = hex.decode(baseWire.wire as string);
   const H = encodeHeader(c2sHeader);
-  const C = base.slice(4 + H.length); // ciphertext ‖ tag
+  const C = new Bytes(base.slice(4 + H.length)); // ciphertext ‖ tag
   const s2cWire = await runCase("msg", {
     kind: "seal",
     key: MSG_KEY_S2C,
@@ -186,7 +183,7 @@ async function msgCases(): Promise<Case[]> {
   const aad = new Uint8Array(base);
   aad[ridOffset]! ^= 0x01;
 
-  const ctxBytes = concat(ascii("POST /x"), Uint8Array.of(0x7f));
+  const ctxBytes = Uint8Array.from([...asciiToBytes("POST /x"), 0x7f]);
 
   return [
     {
@@ -211,25 +208,25 @@ async function msgCases(): Promise<Case[]> {
     },
     {
       name: "trailing-byte-in-header",
-      input: { kind: "open", wire: hex(wireOf(concat(H, Uint8Array.of(0)), C)), key: MSG_KEY_C2S, expectDir: 1 },
+      input: { kind: "open", wire: hex.encode((wireOf(Bytes.concat(H, new Bytes([0])), C)).toUint8Array()), key: MSG_KEY_C2S, expectDir: 1 },
       error: "bad_request",
     },
     {
       name: "fixed-length-mismatch-sid31",
       input: {
         kind: "open",
-        wire: hex(
-          wireOf(
+        wire: hex.encode(
+          (wireOf(
             rawHeader({
-              sid: fromHex(SESSION_1).slice(0, 31),
+              sid: hex.decode(SESSION_1).slice(0, 31),
               epoch: 1,
-              rid: fromHex(REQUEST_ID),
+              rid: hex.decode(REQUEST_ID),
               issuedAt: TIME_SERVER,
-              context: ascii(CONTEXT),
-              iv: fromHex(IV_C2S),
+              context: asciiToBytes(CONTEXT),
+              iv: hex.decode(IV_C2S),
             }),
             C,
-          ),
+          )).toUint8Array(),
         ),
         key: MSG_KEY_C2S,
         expectDir: 1,
@@ -240,19 +237,19 @@ async function msgCases(): Promise<Case[]> {
       name: "label-mismatch",
       input: {
         kind: "open",
-        wire: hex(
-          wireOf(
+        wire: hex.encode(
+          (wireOf(
             rawHeader({
               label: "WAKE/1 mzg",
-              sid: fromHex(SESSION_1),
+              sid: hex.decode(SESSION_1),
               epoch: 1,
-              rid: fromHex(REQUEST_ID),
+              rid: hex.decode(REQUEST_ID),
               issuedAt: TIME_SERVER,
-              context: ascii(CONTEXT),
-              iv: fromHex(IV_C2S),
+              context: asciiToBytes(CONTEXT),
+              iv: hex.decode(IV_C2S),
             }),
             C,
-          ),
+          )).toUint8Array(),
         ),
         key: MSG_KEY_C2S,
         expectDir: 1,
@@ -261,19 +258,19 @@ async function msgCases(): Promise<Case[]> {
     },
     {
       name: "tag-tampered",
-      input: { kind: "open", wire: hex(tampered), key: MSG_KEY_C2S, expectDir: 1 },
+      input: { kind: "open", wire: hex.encode(tampered), key: MSG_KEY_C2S, expectDir: 1 },
       error: "reauth",
     },
     {
       name: "aad-byte-tampered-requestId",
-      input: { kind: "open", wire: hex(aad), key: MSG_KEY_C2S, expectDir: 1 },
+      input: { kind: "open", wire: hex.encode(aad), key: MSG_KEY_C2S, expectDir: 1 },
       error: "reauth",
     },
     {
       name: "context-contains-0x7f",
       input: {
         kind: "open",
-        wire: hex(wireOf(rawHeader({ sid: fromHex(SESSION_1), epoch: 1, rid: fromHex(REQUEST_ID), issuedAt: TIME_SERVER, context: ctxBytes, iv: fromHex(IV_C2S) }), C)),
+        wire: hex.encode((wireOf(rawHeader({ sid: hex.decode(SESSION_1), epoch: 1, rid: hex.decode(REQUEST_ID), issuedAt: TIME_SERVER, context: ctxBytes, iv: hex.decode(IV_C2S) }), C)).toUint8Array()),
         key: MSG_KEY_C2S,
         expectDir: 1,
       },
@@ -294,7 +291,7 @@ async function msgCases(): Promise<Case[]> {
       name: "tampered-plaintext-over-limit",
       input: {
         kind: "open",
-        wire: hex(tamperedLongWire),
+        wire: hex.encode(tamperedLongWire),
         key: MSG_KEY_C2S,
         expectDir: 1,
         maxPlaintext: 16,
@@ -320,12 +317,12 @@ function hdrInput(h: {
 }): Obj {
   return {
     dir: h.dir,
-    sessionId: hex(h.sessionId),
+    sessionId: hex.encode(h.sessionId.toUint8Array()),
     epoch: h.epoch,
-    requestId: hex(h.requestId),
+    requestId: hex.encode(h.requestId.toUint8Array()),
     issuedAt: h.issuedAt,
     context: h.context,
-    iv: hex(h.iv),
+    iv: hex.encode(h.iv.toUint8Array()),
   };
 }
 
@@ -333,8 +330,8 @@ function hdrInput(h: {
 
 async function buildSuites(): Promise<SuiteFile[]> {
   const ecdhZero = { privateKey: A_D, publicKey: A_PUB, peerPublicKey: B_PUB };
-  const keys = await deriveKeys(asSharedSecret(fromHex(SS_NORMAL)), asTranscriptHash(fromHex(HKDF_TH)));
-  const clientFinishedInput = { kind: "client", fkC: hex(keys.fkC), th: HKDF_TH };
+  const keys = await deriveKeys(asSharedSecret(hex.decode(SS_NORMAL)), asTranscriptHash(hex.decode(HKDF_TH)));
+  const clientFinishedInput = { kind: "client", fkC: hex.encode(keys.fkC.toUint8Array()), th: HKDF_TH };
   const clientFinishedValue = (await runCase("finished", clientFinishedInput)).clientFinished as string;
 
   const cases: Array<[string, Case[]]> = [];
@@ -343,7 +340,7 @@ async function buildSuites(): Promise<SuiteFile[]> {
     "lp",
     [
       { name: "empty-field", input: { fields: [""] } },
-      { name: "spec-example-ab-empty", input: { fields: [hex(ascii("ab")), ""] } },
+      { name: "spec-example-ab-empty", input: { fields: [hex.encode((asciiToBytes("ab"))), ""] } },
       { name: "nested", input: { fields: ["00000002616200000000", "7a"] } },
       { name: "no-fields", input: { fields: [] } },
       { name: "u8-255", input: { kind: "u8", value: 255 } },
@@ -480,7 +477,7 @@ async function buildSuites(): Promise<SuiteFile[]> {
         name: "server-finished",
         input: {
           kind: "server",
-          fkS: hex(keys.fkS),
+          fkS: hex.encode(keys.fkS.toUint8Array()),
           th: HKDF_TH,
           clientFinished: clientFinishedValue,
           serverTime: TIME_SERVER,
@@ -584,7 +581,7 @@ async function buildSuites(): Promise<SuiteFile[]> {
     ],
   ]);
 
-  const body = hex(utf8('{"amount":10000}'));
+  const body = hex.encode((utf8ToBytes('{"amount":10000}')));
   cases.push([
     "et",
     [
@@ -619,7 +616,7 @@ async function buildSuites(): Promise<SuiteFile[]> {
             ["content-type", "application/json"],
             ["cache-control", "no-store"],
           ],
-          body: hex(utf8('{"ok":true}')),
+          body: hex.encode((utf8ToBytes('{"ok":true}'))),
         },
       },
       {
@@ -814,8 +811,3 @@ export async function writeSuites(dir: string = DEFAULT_VECTOR_DIR): Promise<str
   return paths;
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const dir = process.argv[2] ?? DEFAULT_VECTOR_DIR;
-  const paths = await writeSuites(dir);
-  console.log(`wrote ${paths.length} suites to ${dir}`);
-}

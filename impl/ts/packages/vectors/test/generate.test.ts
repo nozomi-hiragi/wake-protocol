@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_VECTOR_DIR, writeSuites } from "../scripts/generate-vectors.ts";
+import { DEFAULT_VECTOR_DIR, writeSuites } from "../src/index.ts";
 
 describe("generator stability", () => {
   it("re-running the generator reproduces spec/test-vectors byte for byte", async () => {

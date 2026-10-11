@@ -11,7 +11,7 @@
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm test --workspaces",
-    "vectors": "npm run vectors -w @wake-protocol/core"
+    "vectors": "npm run vectors -w @wake-protocol/vectors"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

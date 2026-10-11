@@ -1,10 +1,15 @@
+import { hex } from "@scure/base";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { WakeError, decodeEtRequest, decodeEtResponse, fromHex, hex } from "../src/index.ts";
-import { DEFAULT_VECTOR_DIR } from "../scripts/generate-vectors.ts";
-import { type Obj, SUITES, runCase } from "../scripts/vector-ops.ts";
+import {
+  WakeError,
+  decodeEtRequest,
+  decodeEtResponse,
+} from "@wake-protocol/core";
+
+import { type Obj, DEFAULT_VECTOR_DIR, SUITES, runCase } from "../src/index.ts";
 
 interface VectorFile {
   wake: string;
@@ -43,18 +48,18 @@ describe("spec/test-vectors", () => {
 
           // Positive ET vectors must also decode back to their input.
           if (file.suite === "et") {
-            const enc = fromHex(v.expected.encoded as string);
+            const enc = hex.decode(v.expected.encoded as string);
             if (v.input.kind === "request") {
               const r = decodeEtRequest(enc);
               assert.equal(r.method, v.input.method);
               assert.equal(r.path, v.input.path);
               assert.equal(r.query, v.input.query);
-              assert.equal(hex(r.body), v.input.body);
+              assert.equal(hex.encode(r.body.toUint8Array()), v.input.body);
               assert.deepEqual(r.headers, v.input.headers);
             } else {
               const r = decodeEtResponse(enc);
               assert.equal(r.status, v.input.status);
-              assert.equal(hex(r.body), v.input.body);
+              assert.equal(hex.encode(r.body.toUint8Array()), v.input.body);
               assert.deepEqual(r.headers, v.input.headers);
             }
           }

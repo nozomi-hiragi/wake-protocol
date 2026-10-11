@@ -1,36 +1,11 @@
 // Public API of the WAKE reference implementation (spec §4–§11).
 // Test-only helpers (fixed IV, fixed private keys) live in ./testing.ts.
-export {
-  type Bytes,
-  EMPTY,
-  ascii,
-  b64u,
-  concat,
-  equalBytes,
-  fromB64u,
-  fromHex,
-  hex,
-  lp,
-  lpDecode,
-  lpDecodeAll,
-  readAscii,
-  readU16,
-  readU32,
-  readU64,
-  readU8,
-  readUtf8,
-  u16,
-  u32,
-  u64,
-  u8,
-  utf8,
-} from "./encoding.ts";
-export { WakeError, fail } from "./errors.ts";
-export { timeToU64, u64ToTime } from "./time.ts";
+export { Bytes } from "@wake-protocol/bytes";
+export { WakeError } from "./spec/errors.ts";
+export { LABELS } from "./spec/labels.ts";
 export {
   type ApprovalId,
   type ApprovalNonce,
-  type Brand,
   type C2sKey,
   type ClientFinishedMac,
   type EcPublicKey,
@@ -72,18 +47,15 @@ export {
   asTaNonce,
   asTranscriptHash,
   asWebAuthnChallenge,
-} from "./types.ts";
+} from "./spec/types.ts";
+export { type C2sCryptoKey, type S2cCryptoKey, type FinishedCryptoKeyC, type FinishedCryptoKeyS, aesKey, hmacKey } from "./spec/crypto.ts";
 export {
   type EphemeralKeyPair,
-  aesGcmDecrypt,
-  aesGcmEncrypt,
-  aesKey,
   ecdh,
   generateEphemeral,
-  hkdf,
-  hmac,
-  hmacKey,
-  hmacVerify,
+  parseEcPublicKey,
+} from "./keys/ecdh.ts";
+export {
   newApprovalId,
   newApprovalNonce,
   newExchangeId,
@@ -92,57 +64,66 @@ export {
   newServerNonce,
   newSessionId,
   newTaNonce,
-  parseEcPublicKey,
-  randomBytes,
-  sha256,
-} from "./crypto.ts";
+} from "./keys/ids.ts";
 export {
   type KeySchedule,
+  deriveKeys,
+} from "./kx/schedule.ts";
+export {
   type LoginTranscriptInput,
   type RekeyTranscriptInput,
-  type ServerFinishedInput,
-  type TaBindingInput,
   MODE_LOGIN,
   MODE_REKEY,
-  clientFinished,
-  deriveKeys,
-  encodeChallengeInput,
   encodeLoginTranscript,
   encodeRekeyTranscript,
-  encodeTaBinding,
-  krChallenge,
-  kxChallenge,
   loginTranscriptHash,
   rekeyTranscriptHash,
+} from "./kx/transcript.ts";
+export {
+  type ServerFinishedInput,
+  clientFinished,
   serverFinished,
-  taBinding,
-  taChallenge,
-  taKrChallenge,
   verifyClientFinished,
   verifyServerFinished,
-} from "./kx.ts";
+} from "./kx/finished.ts";
+export {
+  type TaBindingInput,
+  encodeTaBinding,
+  taBinding,
+} from "./kx/binding.ts";
+export {
+  krChallenge,
+  kxChallenge,
+  taChallenge,
+  taKrChallenge,
+} from "./kx/challenge.ts";
 export {
   type MsgHeader,
   type MsgOptions,
   type ParsedWire,
-  type SealInput,
   DEFAULT_MAX_PLAINTEXT,
   DIR_C2S,
   DIR_S2C,
   checkContext,
+  checkPlaintextLength,
   encodeHeader,
+  parseWire,
+} from "./msg/header.ts";
+export {
+  type SealInput,
   open,
   openParsed,
-  parseWire,
   seal,
-} from "./msg.ts";
+} from "./msg/aead.ts";
 export {
   checkContent,
+} from "./ta/content.ts";
+export {
   createOperationIdentity,
   hashInput,
   operationId,
   parseOperationIdHex,
-} from "./ta.ts";
+} from "./ta/operation.ts";
 export {
   type EtHeader,
   type EtMethod,
@@ -154,16 +135,22 @@ export {
   ET_METHODS,
   ET_PATH_MAX,
   ET_QUERY_MAX,
+  ET_REQUEST_MAX_ENCODED,
+  ET_RESPONSE_MAX_ENCODED,
   ET_REQ_LABEL,
   ET_RES_LABEL,
+} from "./et/types.ts";
+export {
   checkMethod,
   checkPath,
   checkQuery,
   checkRequestHeaders,
   checkResponseHeaders,
   checkStatus,
+} from "./et/validate.ts";
+export {
   decodeEtRequest,
   decodeEtResponse,
   encodeEtRequest,
   encodeEtResponse,
-} from "./et.ts";
+} from "./et/codec.ts";
