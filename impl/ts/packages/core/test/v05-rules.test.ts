@@ -23,7 +23,7 @@ const code = (fn: () => void): string | undefined => {
   return undefined;
 };
 
-const encodeU32LengthPrefixedFields = (wire: Uint8Array): Uint8Array[] => {
+const splitU32LengthPrefixed = (wire: Uint8Array): Uint8Array[] => {
   const fields: Uint8Array[] = [];
   const view = new DataView(wire.buffer, wire.byteOffset, wire.byteLength);
   let offset = 0;
@@ -82,7 +82,7 @@ describe("ET v0.5", () => {
   it("round-trips field case, obs-text bytes, order, and separate Set-Cookie fields", () => {
     const headers = [["X-Trace-Id", "opaque-\u00e9"], ["Set-Cookie", "a=1"], ["set-cookie", "b=2"]] as const;
     const wire = encodeEtResponse({ status: 200, headers, body: new Bytes([]) });
-    const wireHeaders = encodeU32LengthPrefixedFields(encodeU32LengthPrefixedFields(wire.toUint8Array())[2]!);
+    const wireHeaders = splitU32LengthPrefixed(splitU32LengthPrefixed(wire.toUint8Array())[2]!);
     assert.deepEqual(Array.from(wireHeaders[1]!), [111, 112, 97, 113, 117, 101, 45, 0xe9]);
     assert.deepEqual(decodeEtResponse(wire).headers, headers);
     assert.equal(code(() => checkResponseHeaders([["X-Opaque", "\u0085"]])), undefined);
