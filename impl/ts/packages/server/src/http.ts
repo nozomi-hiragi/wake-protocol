@@ -1,48 +1,8 @@
 // Spec §4.4, §4.8, §12: strict input boundaries and HTTP responses.
-import { base64urlnopad } from "@scure/base";
-import { bytesToUtf8, parseIJson } from "@wake-protocol/codec";
 import { WakeError } from "@wake-protocol/core";
-
-export function remapInput<T>(code: string, fn: () => T): T {
-  try {
-    return fn();
-  } catch (e) {
-    if (e instanceof RangeError || e instanceof TypeError || e instanceof SyntaxError) {
-      throw new WakeError(code);
-    }
-    throw e;
-  }
-}
-
-export function parseObject(bytes: Uint8Array, code: string): Record<string, unknown> {
-  const text = remapInput(code, () => bytesToUtf8(bytes));
-  const value = remapInput(code, () => parseIJson(text));
-  if (!isObject(value)) {
-    throw new WakeError(code);
-  }
-  return value;
-}
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function decodeBinary(value: unknown, code: string, length?: number): Uint8Array {
-  if (typeof value !== "string" || !/^[A-Za-z0-9_-]*$/u.test(value) || value.length % 4 === 1) {
-    throw new WakeError(code);
-  }
-  // @scure/base reports invalid padding bits as Error, so reject known input
-  // violations before decoding without remapping unexpected library failures.
-  const remainder = value.length % 4;
-  const last = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".indexOf(value.at(-1) ?? "A");
-  if ((remainder === 2 && (last & 15) !== 0) || (remainder === 3 && (last & 3) !== 0)) {
-    throw new WakeError(code);
-  }
-  const bytes = remapInput(code, () => base64urlnopad.decode(value));
-  if ((length !== undefined && bytes.length !== length) || base64urlnopad.encode(bytes) !== value) {
-    throw new WakeError(code);
-  }
-  return bytes;
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -56,7 +16,14 @@ export function jsonTextResponse(body: string, status = 200): Response {
   });
 }
 
-export function outerError(code: string): Response {
+function withRetryAfter(response: Response, code: string, retryAfterSec: number): Response {
+  if (code === "rate_limited") {
+    response.headers.set("retry-after", String(retryAfterSec));
+  }
+  return response;
+}
+
+export function outerError(code: string, retryAfterSec: number): Response {
   const statuses: Record<string, number> = {
     bad_request: 400,
     too_large: 413,
@@ -65,17 +32,17 @@ export function outerError(code: string): Response {
     rate_limited: 429,
     retry: 503,
   };
-  return jsonResponse({ wakeError: code }, statuses[code] ?? 503);
+  return withRetryAfter(jsonResponse({ wakeError: code }, statuses[code] ?? 503), code, retryAfterSec);
 }
 
-export function authError(code: string): Response {
+export function authError(code: string, retryAfterSec: number): Response {
   const statuses: Record<string, number> = {
     bad_request: 400,
     auth_failed: 401,
     rate_limited: 429,
     retry: 503,
   };
-  return jsonResponse({ error: code }, statuses[code] ?? 503);
+  return withRetryAfter(jsonResponse({ error: code }, statuses[code] ?? 503), code, retryAfterSec);
 }
 
 export function checkContentType(req: Request, expected: string): void {

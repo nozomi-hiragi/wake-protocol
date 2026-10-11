@@ -4,6 +4,8 @@ import { utf8ToBytes } from "@wake-protocol/codec";
 import { ecdsaRawToDer, randomBytes, sha256 } from "@wake-protocol/crypto";
 import type { WakeCredential } from "./store/types.ts";
 
+export { insertSession } from "./store/memory.ts";
+
 export interface GetAssertionOptions {
   challenge: Uint8Array;
   rpId: string;

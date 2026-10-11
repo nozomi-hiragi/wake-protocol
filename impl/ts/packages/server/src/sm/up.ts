@@ -1,8 +1,8 @@
 // Spec §8.3–§8.9, §12.3–§12.4: ordered authenticated message dispatch.
-import { Bytes, DIR_C2S, DIR_S2C, openParsed, parseWire, seal, WakeError } from "@wake-protocol/core";
+import { Bytes, DIR_C2S, DIR_S2C, openParsed, parseJsonObject, parseWire, seal, WakeError } from "@wake-protocol/core";
 import type { MsgHeader, ParsedWire } from "@wake-protocol/core";
 import { utf8ToBytes } from "@wake-protocol/codec";
-import { checkContentType, outerError, parseObject, readBody } from "../http.ts";
+import { checkContentType, outerError, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
 import type { EpochKeys, SessionRecord } from "../store/types.ts";
 import { sessionExpired } from "./lifetime.ts";
@@ -69,13 +69,14 @@ async function reserveEncryptions(header: MsgHeader, options: ServerOptions): Pr
       options.now(),
       options.maxEncryptionsPerKey,
     );
-  } catch {
+  } catch (e) {
     // Fail closed: no encrypted response without guaranteed §8.7 accounting.
-    return outerError("retry");
+    const limited = e instanceof WakeError && e.code === "rate_limited";
+    return outerError(limited ? "rate_limited" : "retry", options.retryAfterSec);
   }
   if (!reserved) {
     await options.store.expireSession(sessionId, options.now());
-    return outerError("reauth");
+    return outerError("reauth", options.retryAfterSec);
   }
   return null;
 }
@@ -85,18 +86,18 @@ async function dispatchSession(header: MsgHeader, options: ServerOptions): Promi
   if (header.context === "wake/session") {
     const latest = await options.store.getSession(sessionId);
     if (!latest || latest.status !== "ACTIVE") {
-      return outerError("reauth");
+      return outerError("reauth", options.retryAfterSec);
     }
     if (sessionExpired(latest, options.now())) {
       await options.store.expireSession(sessionId, options.now());
-      return outerError("reauth");
+      return outerError("reauth", options.retryAfterSec);
     }
     return { body: sessionInfo(latest, options.now()), logout: false };
   }
   const revoked = await options.store.revokeForLogout(sessionId, options.now());
   if (!revoked) {
     await options.store.expireSession(sessionId, options.now());
-    return outerError("reauth");
+    return outerError("reauth", options.retryAfterSec);
   }
   return { body: {}, logout: true };
 }
@@ -116,7 +117,7 @@ async function dispatch(
     if (header.context !== "wake/session" && header.context !== "wake/logout") {
       return { body: encryptedError("invalid_context"), logout: false };
     }
-    parseObject(plaintext.toUint8Array(), "invalid_request");
+    parseJsonObject(plaintext.toUint8Array(), "invalid_request");
     return await dispatchSession(header, options);
   } catch (e) {
     const code = e instanceof WakeError && (e.code === "invalid_request" || e.code === "rate_limited") ? e.code : "internal";

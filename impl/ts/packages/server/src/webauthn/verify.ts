@@ -1,5 +1,5 @@
 // Spec §6.2–§6.4: assertion validation for the KX ceremony.
-import { Bytes, WakeError } from "@wake-protocol/core";
+import { Bytes, decodeBase64urlField, parseJsonObject, WakeError } from "@wake-protocol/core";
 import type { WebAuthnChallenge } from "@wake-protocol/core";
 import { utf8ToBytes } from "@wake-protocol/codec";
 import {
@@ -8,9 +8,9 @@ import {
   p256EcdsaVerify,
   sha256,
 } from "@wake-protocol/crypto";
-import { decodeBinary, isObject, parseObject, remapInput } from "../http.ts";
+import { isObject } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
-import type { WakeCredential } from "../store/types.ts";
+import type { ExchangeUser, WakeCredential } from "../store/types.ts";
 
 function fail(): never {
   throw new WakeError("auth_failed");
@@ -33,8 +33,8 @@ function checkClientData(
   challenge: WebAuthnChallenge,
   options: ServerOptions,
 ): string {
-  const cd = parseObject(clientData, "auth_failed");
-  if (cd.type !== "webauthn.get" || !equal(decodeBinary(cd.challenge, "auth_failed", 32), challenge.toUint8Array())) {
+  const cd = parseJsonObject(clientData, "auth_failed");
+  if (cd.type !== "webauthn.get" || !equal(decodeBase64urlField(cd.challenge, "auth_failed", 32), challenge.toUint8Array())) {
     fail();
   }
   if (typeof cd.origin !== "string" || !options.loginOrigins.includes(cd.origin)) {
@@ -56,6 +56,8 @@ async function checkAuthenticatorData(authData: Uint8Array, rpId: string): Promi
     (flags & 0x05) !== 0x05 ||
     (flags & 0x40) !== 0 ||
     ((flags & 0x80) === 0 && authData.length !== 37) ||
+    // ED set requires extension data after the fixed 37 bytes.
+    ((flags & 0x80) !== 0 && authData.length === 37) ||
     ((flags & 0x10) !== 0 && (flags & 0x08) === 0)
   ) {
     fail();
@@ -78,7 +80,15 @@ async function checkSignature(
   authData: Uint8Array,
   clientData: Uint8Array,
 ): Promise<void> {
-  const rawSignature = remapInput("auth_failed", () => ecdsaDerToRaw(signature, 32));
+  let rawSignature: Uint8Array;
+  try {
+    rawSignature = ecdsaDerToRaw(signature, 32);
+  } catch (e) {
+    if (e instanceof RangeError || e instanceof TypeError || e instanceof SyntaxError) {
+      fail();
+    }
+    throw e;
+  }
   let key: CryptoKey;
   try {
     key = await importP256SpkiPublicKey(credential.publicKey);
@@ -98,12 +108,13 @@ async function checkSignature(
 function checkUser(
   userHandle: unknown,
   credential: WakeCredential,
-  requestedUserId: string | null | undefined,
+  user: ExchangeUser,
 ): void {
-  if (userHandle !== undefined && userHandle !== null && !equal(decodeBinary(userHandle, "auth_failed"), credential.userHandle)) {
+  if (userHandle !== undefined && userHandle !== null && !equal(decodeBase64urlField(userHandle, "auth_failed"), credential.userHandle)) {
     fail();
   }
-  if (requestedUserId !== undefined && credential.userId !== requestedUserId) {
+  // Username mode with an unknown user (null) can never succeed.
+  if (user.mode === "username" && (user.requestedUserId === null || credential.userId !== user.requestedUserId)) {
     fail();
   }
 }
@@ -120,26 +131,26 @@ function checkCounter(credential: WakeCredential, signCount: number): boolean {
 export async function verifyAssertion(
   assertion: Record<string, unknown>,
   challenge: WebAuthnChallenge,
-  requestedUserId: string | null | undefined,
+  user: ExchangeUser,
   options: ServerOptions,
 ): Promise<VerifiedAssertion> {
   if (assertion.type !== "public-key" || !isObject(assertion.response)) {
     fail();
   }
-  const rawId = decodeBinary(assertion.rawId, "auth_failed");
-  const assertionId = decodeBinary(assertion.id, "auth_failed");
+  const rawId = decodeBase64urlField(assertion.rawId, "auth_failed");
+  const assertionId = decodeBase64urlField(assertion.id, "auth_failed");
   if (!rawId.length || !equal(rawId, assertionId)) {
     fail();
   }
   const response = assertion.response;
-  const clientData = decodeBinary(response.clientDataJSON, "auth_failed");
-  const authData = decodeBinary(response.authenticatorData, "auth_failed");
-  const signature = decodeBinary(response.signature, "auth_failed");
+  const clientData = decodeBase64urlField(response.clientDataJSON, "auth_failed");
+  const authData = decodeBase64urlField(response.authenticatorData, "auth_failed");
+  const signature = decodeBase64urlField(response.signature, "auth_failed");
   const origin = checkClientData(clientData, challenge, options);
   await checkAuthenticatorData(authData, options.rpId);
   const credential = await findCredential(rawId, options);
   await checkSignature(credential, signature, authData, clientData);
-  checkUser(response.userHandle, credential, requestedUserId);
+  checkUser(response.userHandle, credential, user);
   const signCount = new DataView(authData.buffer, authData.byteOffset + 33, 4).getUint32(0, false);
   const counterAnomaly = checkCounter(credential, signCount);
   return { credential, signCount, origin, counterAnomaly };

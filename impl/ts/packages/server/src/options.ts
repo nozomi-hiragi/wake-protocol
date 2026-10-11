@@ -30,6 +30,8 @@ export interface WakeServerOptions {
   fakeCredentialCount?: number;
   fakeCredentialIdLength?: number;
   maxEncryptionsPerKey?: number;
+  /** Retry-After value (seconds) sent with every rate_limited response. */
+  retryAfterSec?: number;
   onCounterAnomaly?: (event: CounterAnomaly) => void | Promise<void>;
 }
 
@@ -49,6 +51,7 @@ const defaults = {
   fakeCredentialCount: 1,
   fakeCredentialIdLength: 32,
   maxEncryptionsPerKey: 2 ** 28,
+  retryAfterSec: 1,
 };
 
 function invalid(): never {
@@ -109,8 +112,10 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     values.epochGraceMs > 300_000 ||
     values.hardCapMs < values.authLifetimeMs ||
     values.idleTimeoutSec > 0xffffffff ||
-    values.fakeCredentialIdLength > 32 ||
-    values.fakeCredentialCount > 0xffffffff ||
+    values.fakeCredentialIdLength < 16 ||
+    values.fakeCredentialIdLength > 64 ||
+    values.fakeCredentialCount > 16 ||
+    values.retryAfterSec > 86_400 ||
     values.maxEncryptionsPerKey > 2 ** 28 ||
     values.maxPlaintext > 0xffffffff ||
     values.maxAuthBody > 0xffffffff
@@ -121,6 +126,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     "createExchange",
     "getExchange",
     "commitLogin",
+    "clearSignCountUpdate",
     "getSession",
     "touchSession",
     "reserveEncryptions",
@@ -139,7 +145,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     ...values,
     loginOrigins: [...options.loginOrigins],
     secret: options.secret.slice(),
-    store: options.store ?? new MemoryWakeStore(values.completedRetentionMs),
+    store: options.store ?? new MemoryWakeStore(values.completedRetentionMs, { now: options.now ?? Date.now }),
     now: options.now ?? Date.now,
   };
 }

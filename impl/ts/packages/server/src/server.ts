@@ -43,7 +43,7 @@ export function createWakeServer(options: WakeServerOptions): WakeServer {
           ["bad_request", "too_large", "reauth", "epoch_retired", "rate_limited", "retry"] :
           ["bad_request", "auth_failed", "rate_limited", "retry"];
         const code = e instanceof WakeError && allowed.includes(e.code) ? e.code : "retry";
-        return path === "/wake/up" ? outerError(code) : authError(code);
+        return path === "/wake/up" ? outerError(code, config.retryAfterSec) : authError(code, config.retryAfterSec);
       }
     },
     revokeSession: sessionId => config.store.revokeSession(sessionId),

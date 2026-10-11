@@ -3,14 +3,15 @@ import { base64urlnopad } from "@scure/base";
 import { Byte4 } from "@wake-protocol/bytes";
 import { asciiToBytes, utf8ToBytes, encodeU32LengthPrefixed } from "@wake-protocol/codec";
 import { hmac, hmacKey } from "@wake-protocol/crypto";
-import { generateEphemeral, newExchangeId, newSessionId, newServerNonce, WakeError } from "@wake-protocol/core";
-import { checkContentType, jsonResponse, parseObject, readBody } from "../http.ts";
+import { generateEphemeral, newExchangeId, newSessionId, newServerNonce, parseJsonObject, WakeError } from "@wake-protocol/core";
+import { checkContentType, jsonResponse, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
 
+// No `transports` on any descriptor: only some credentials have them stored, and a fake descriptor must be
+// indistinguishable from a real one (§6.6). Browsers discover transports themselves.
 interface Descriptor {
   type: "public-key";
   id: string;
-  transports?: string[];
 }
 
 interface UsernameResolution {
@@ -18,19 +19,28 @@ interface UsernameResolution {
   allowCredentials: Descriptor[];
 }
 
+/** Deterministic pseudo-random bytes: HMAC blocks with a block counter in the LP input. */
+async function fakeCredentialId(key: CryptoKey, username: string, index: number, length: number): Promise<Uint8Array> {
+  const id = new Uint8Array(length);
+  for (let block = 0; block * 32 < length; block++) {
+    const input = encodeU32LengthPrefixed(
+      asciiToBytes("wake-server fake-credential"),
+      utf8ToBytes(username),
+      new Byte4(index).toUint8Array(),
+      new Byte4(block).toUint8Array(),
+    );
+    id.set((await hmac(key, input)).slice(0, length - block * 32), block * 32);
+  }
+  return id;
+}
+
 async function createFakeCredentials(username: string, options: ServerOptions): Promise<Descriptor[]> {
   const key = await hmacKey(options.secret);
   const fake: Descriptor[] = [];
   for (let i = 0; i < options.fakeCredentialCount; i++) {
-    const input = encodeU32LengthPrefixed(
-      asciiToBytes("wake-server fake-credential"),
-      utf8ToBytes(username),
-      new Byte4(i).toUint8Array(),
-    );
     fake.push({
       type: "public-key",
-      id: base64urlnopad.encode((await hmac(key, input)).slice(0, options.fakeCredentialIdLength)),
-      transports: ["internal", "hybrid"],
+      id: base64urlnopad.encode(await fakeCredentialId(key, username, i, options.fakeCredentialIdLength)),
     });
   }
   return fake;
@@ -49,7 +59,6 @@ async function resolveUsername(username: unknown, options: ServerOptions): Promi
     .map(c => ({
       type: "public-key" as const,
       id: base64urlnopad.encode(c.credentialId),
-      ...(c.transports ? { transports: [...c.transports] } : {}),
     })) ?? [];
   return {
     requestedUserId: active.length ? user!.userId : null,
@@ -59,7 +68,7 @@ async function resolveUsername(username: unknown, options: ServerOptions): Promi
 
 export async function start(req: Request, options: ServerOptions): Promise<Response> {
   checkContentType(req, "application/json");
-  const body = parseObject(await readBody(req, options.maxAuthBody, "bad_request"), "bad_request");
+  const body = parseJsonObject(await readBody(req, options.maxAuthBody, "bad_request"), "bad_request");
   if (body.mode !== "discoverable" && body.mode !== "username") {
     throw new WakeError("bad_request");
   }
@@ -68,7 +77,8 @@ export async function start(req: Request, options: ServerOptions): Promise<Respo
   const sessionId = newSessionId();
   const serverNonce = newServerNonce();
   const ephemeral = await generateEphemeral();
-  const expiresAt = options.now() + options.exchangeTtlMs;
+  const serverTime = options.now();
+  const expiresAt = serverTime + options.exchangeTtlMs;
   if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
     throw new RangeError("exchange expiration");
   }
@@ -81,7 +91,9 @@ export async function start(req: Request, options: ServerOptions): Promise<Respo
     serverPublicKey: ephemeral.publicKey,
     serverPrivateKey: ephemeral.privateKey,
     expiresAt,
-    ...(username ? { requestedUserId: username.requestedUserId } : {}),
+    ...(username ?
+      { mode: "username" as const, requestedUserId: username.requestedUserId } :
+      { mode: "discoverable" as const }),
   });
   return jsonResponse({
     version: "WAKE/1",
@@ -90,6 +102,7 @@ export async function start(req: Request, options: ServerOptions): Promise<Respo
     epoch: 0,
     serverNonce: base64urlnopad.encode(serverNonce.toUint8Array()),
     serverPublicKey: base64urlnopad.encode(ephemeral.publicKey.toUint8Array()),
+    serverTime,
     expiresAt,
     webauthn: {
       rpId: options.rpId,

@@ -26,7 +26,8 @@ const numeric: (keyof WakeServerOptions)[] = [
   "maxAuthBody",
   "fakeCredentialCount",
   "fakeCredentialIdLength",
-  "maxEncryptionsPerKey"
+  "maxEncryptionsPerKey",
+  "retryAfterSec"
 ];
 
 for (const key of numeric) {
@@ -67,7 +68,10 @@ const invalid: [string, Record<string, unknown>][] = [
   ["idle u32 overflow", { idleTimeoutSec: 0x100000000 }],
   ["zero fake count", { fakeCredentialCount: 0 }],
   ["zero fake length", { fakeCredentialIdLength: 0 }],
-  ["fake length past digest", { fakeCredentialIdLength: 33 }],
+  ["fake length below 16", { fakeCredentialIdLength: 15 }],
+  ["fake length above 64", { fakeCredentialIdLength: 65 }],
+  ["fake count above 16", { fakeCredentialCount: 17 }],
+  ["retry-after above a day", { retryAfterSec: 86_401 }],
   ["zero encryption count", { maxEncryptionsPerKey: 0 }],
   ["encryption limit past recommended cap", { maxEncryptionsPerKey: 2 ** 28 + 1 }],
 ];
@@ -105,6 +109,10 @@ test(
         }
       )
     );
+    for (const length of [16, 64]) {
+      assert.doesNotThrow(() => createWakeServer({ ...base, fakeCredentialIdLength: length }));
+    }
+    assert.doesNotThrow(() => createWakeServer({ ...base, fakeCredentialCount: 16, retryAfterSec: 86_400 }));
   }
 );
 
@@ -120,7 +128,7 @@ for (const key of numeric.filter(key => !["freshnessWindowMs", "epochGraceMs", "
   );
 }
 
-for (const key of ["maxPlaintext", "maxAuthBody", "fakeCredentialCount"] as const) {
+for (const key of ["maxPlaintext", "maxAuthBody"] as const) {
   test(
     `${key} u32 boundary`,
     () => {
@@ -150,7 +158,7 @@ test(
           idleTimeoutSec: 1,
           maxPlaintext: 1,
           maxAuthBody: 1,
-          fakeCredentialIdLength: 1,
+          fakeCredentialIdLength: 16,
           fakeCredentialCount: 1,
           maxEncryptionsPerKey: 1
         }

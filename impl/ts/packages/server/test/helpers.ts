@@ -44,6 +44,7 @@ export interface StartResponse {
   epoch: number;
   serverNonce: string;
   serverPublicKey: string;
+  serverTime: number;
   expiresAt: number;
   webauthn: Omit<GetAssertionOptions, "challenge">;
 }
@@ -70,8 +71,8 @@ export async function fixture(
   const auth = await SoftAuthenticator.create(authInit);
   const credentials = new MemoryCredentialStore();
   credentials.setCredential(auth.credential, "alice");
-  const store = new MemoryWakeStore(overrides.completedRetentionMs ?? 600000);
   const clock = { now: 1000000 };
+  const store = new MemoryWakeStore(overrides.completedRetentionMs ?? 600000, { now: () => clock.now });
   const server = createWakeServer(
     {
       rpId: RP,

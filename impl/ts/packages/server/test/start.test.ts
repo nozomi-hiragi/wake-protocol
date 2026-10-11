@@ -12,7 +12,8 @@ test(
     const b = await start(f);
     assert.equal(a.version, "WAKE/1");
     assert.equal(a.epoch, 0);
-    assert.equal(a.expiresAt, f.clock.now + 300000);
+    assert.equal(a.serverTime, f.clock.now);
+    assert.equal(a.expiresAt, a.serverTime + 300000);
     assert.equal(decode(a.exchangeId).length, 16);
     assert.equal(decode(a.sessionId).length, 32);
     assert.equal(decode(a.serverNonce).length, 32);
@@ -36,7 +37,7 @@ test(
 );
 
 test(
-  "username start filters inactive credentials and forwards transports",
+  "username start filters inactive credentials and omits transports",
   async () => {
     const f = await fixture();
     const inactive = await SoftAuthenticator.create({ rpId: "example.com", origin: ORIGIN, userId: "u1" });
@@ -47,8 +48,7 @@ test(
       [
         {
           type: "public-key",
-          id: encode(f.auth.credential.credentialId),
-          transports: ["internal", "hybrid"]
+          id: encode(f.auth.credential.credentialId)
         }
       ]
     );
@@ -74,7 +74,7 @@ test(
     assert.equal(empty.webauthn.allowCredentials.length, 3);
     for (const item of a.webauthn.allowCredentials) {
       assert.equal(decode(item.id).length, 16);
-      assert.deepEqual(item.transports, ["internal", "hybrid"]);
+      assert.deepEqual(Object.keys(item).sort(), ["id", "type"]);
     }
     assert.equal(new Set(a.webauthn.allowCredentials.map(item => item.id)).size, 3);
     assert.deepEqual(Object.keys(a).sort(), Object.keys(await start(f, { mode: "username", username: "alice" })).sort());
@@ -216,6 +216,7 @@ test(
       const fields = [
         Buffer.from("wake-server fake-credential", "ascii"),
         Buffer.from("missing", "utf8"),
+        Buffer.alloc(4),
         Buffer.alloc(4)
       ];
       fields[2]!.writeUInt32BE(index);
@@ -257,5 +258,81 @@ test(
     } as RequestInit);
     await expectError(response(await f.server.handle(req)), 400, "bad_request");
     assert.equal(cancelled, true);
+  }
+);
+
+test(
+  "fake IDs longer than one digest use a block counter and match independent HMAC blocks",
+  async () => {
+    const { createHmac } = await import("node:crypto");
+    const f = await fixture({ fakeCredentialCount: 1, fakeCredentialIdLength: 64 });
+    const result = await start(f, { mode: "username", username: "missing" });
+    const blocks = [0, 1].map(block => {
+      const fields = [
+        Buffer.from("wake-server fake-credential", "ascii"),
+        Buffer.from("missing", "utf8"),
+        Buffer.alloc(4),
+        Buffer.alloc(4)
+      ];
+      fields[3]!.writeUInt32BE(block);
+      const pieces = fields.flatMap(field => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(field.length);
+        return [length, field];
+      });
+      return createHmac("sha256", Buffer.alloc(32, 7)).update(Buffer.concat(pieces)).digest();
+    });
+    const id = decode(result.webauthn.allowCredentials[0]!.id);
+    assert.equal(id.length, 64);
+    assert.deepEqual(Buffer.from(id), Buffer.concat(blocks));
+    assert.notDeepEqual(blocks[0], blocks[1]);
+  }
+);
+
+for (const length of [16, 17, 31, 32, 33, 48, 63, 64]) {
+  test(
+    `fake and real descriptors have identical key sets and equal-length IDs for ${length}-byte fake IDs`,
+    async () => {
+      const f = await fixture({ fakeCredentialCount: 2, fakeCredentialIdLength: length });
+      const real = await start(f, { mode: "username", username: "alice" });
+      const fake = await start(f, { mode: "username", username: "nobody" });
+      assert.equal(fake.webauthn.allowCredentials.length, 2);
+      assert.equal(real.webauthn.allowCredentials.length, 1);
+      for (const item of [...real.webauthn.allowCredentials, ...fake.webauthn.allowCredentials]) {
+        assert.deepEqual(Object.keys(item).sort(), ["id", "type"]);
+        assert.equal(item.type, "public-key");
+      }
+      for (const item of fake.webauthn.allowCredentials) {
+        assert.equal(decode(item.id).length, length);
+      }
+    }
+  );
+}
+
+test(
+  "real descriptors omit transports even when the stored credential has them",
+  async () => {
+    const f = await fixture();
+    assert.deepEqual(f.auth.credential.transports, ["internal", "hybrid"]);
+    const result = await start(f, { mode: "username", username: "alice" });
+    assert.deepEqual(result.webauthn.allowCredentials, [{ type: "public-key", id: encode(f.auth.credential.credentialId) }]);
+  }
+);
+
+test(
+  "exchanges record the mode explicitly, with null for an unknown username",
+  async () => {
+    const f = await fixture();
+    const discoverable = await start(f);
+    const known = await start(f, { mode: "username", username: "alice" });
+    const unknown = await start(f, { mode: "username", username: "nobody" });
+    const get = async (r: { exchangeId: string; }) => f.store.getExchange(decode(r.exchangeId), f.clock.now);
+    const d = await get(discoverable);
+    const k = await get(known);
+    const u = await get(unknown);
+    assert.equal(d?.mode, "discoverable");
+    assert.equal(d && "requestedUserId" in d, false);
+    assert.deepEqual([k?.mode, k?.mode === "username" ? k.requestedUserId : "-"], ["username", "u1"]);
+    assert.deepEqual([u?.mode, u?.mode === "username" ? u.requestedUserId : "-"], ["username", null]);
   }
 );

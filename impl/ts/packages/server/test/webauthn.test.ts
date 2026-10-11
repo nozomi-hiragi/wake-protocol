@@ -22,6 +22,7 @@ const tamperCases: [string, AssertionTamper][] = [
   ["UV absent", { clearFlags: 0x04 }],
   ["AT set", { setFlags: 0x40 }],
   ["BS without BE", { flags: 0x15 }],
+  ["ED set without extension data", { setFlags: 0x80 }],
   ["extensions without ED", { extraAuthData: new Uint8Array([0xa0]) }],
   ["short auth data", { authenticatorData: new Uint8Array(36) }],
   ["user handle mismatch", { userHandle: new Uint8Array([1]) }],
@@ -488,3 +489,42 @@ test(
     await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
   }
 );
+
+for (const anomaly of [false, true]) {
+  test(
+    `a counter update that fails after the commit is applied on replay (anomaly ${anomaly})`,
+    async () => {
+      let notifications = 0;
+      const f = await fixture(
+        {
+          onCounterAnomaly: () => {
+            notifications++;
+          }
+        },
+        { rpId: RP, origin: ORIGIN, userId: "u1", signCount: anomaly ? 5 : 0, backupEligible: true }
+      );
+      const p = await prepare(f, { signCount: anomaly ? 3 : 4 });
+      const update = f.credentials.updateSignCount.bind(f.credentials);
+      let attempts = 0;
+      f.credentials.updateSignCount = async (...args) => {
+        if (attempts++ === 0) {
+          throw new Error("credential store unavailable");
+        }
+        await update(...args);
+      };
+      await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 503, "retry");
+      assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "COMPLETED");
+      assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, anomaly ? 5 : 0);
+      assert.equal(notifications, 0);
+      const replayed = await jsonRequest(f.server, "/auth/complete", p.body);
+      assert.equal(replayed.status, 200);
+      assert.equal(attempts, 2);
+      assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, anomaly ? 5 : 4);
+      assert.equal(notifications, anomaly ? 1 : 0);
+      assert.equal((await jsonRequest(f.server, "/auth/complete", p.body)).status, 200);
+      assert.equal(attempts, 2);
+      assert.equal(notifications, anomaly ? 1 : 0);
+      assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.signCountUpdate, undefined);
+    }
+  );
+}

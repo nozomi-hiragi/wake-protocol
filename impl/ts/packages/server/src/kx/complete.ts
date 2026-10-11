@@ -7,8 +7,10 @@ import {
   deriveKeys,
   ecdh,
   kxChallenge,
+  decodeBase64urlField,
   loginTranscriptHash,
   parseEcPublicKey,
+  parseJsonObject,
   serverFinished,
   verifyClientFinished,
   WakeError,
@@ -19,9 +21,9 @@ import type {
   ExchangeId,
   LoginTranscriptHash,
 } from "@wake-protocol/core";
-import { checkContentType, decodeBinary, isObject, jsonTextResponse, parseObject, readBody } from "../http.ts";
+import { checkContentType, isObject, jsonTextResponse, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
-import type { EpochKeys, ExchangeRecord, SessionRecord } from "../store/types.ts";
+import type { EpochKeys, ExchangeRecord, SessionRecord, SignCountUpdate } from "../store/types.ts";
 import { verifyAssertion } from "../webauthn/verify.ts";
 import type { VerifiedAssertion } from "../webauthn/verify.ts";
 
@@ -42,9 +44,9 @@ interface LoginResult {
 
 async function parseCompleteBody(req: Request, options: ServerOptions): Promise<CompleteBody> {
   checkContentType(req, "application/json");
-  const body = parseObject(await readBody(req, options.maxAuthBody, "bad_request"), "bad_request");
-  const exchangeId = asExchangeId(decodeBinary(body.exchangeId, "bad_request", 16));
-  const clientMac = asClientFinishedMac(decodeBinary(body.clientFinished, "bad_request", 32));
+  const body = parseJsonObject(await readBody(req, options.maxAuthBody, "bad_request"), "bad_request");
+  const exchangeId = asExchangeId(decodeBase64urlField(body.exchangeId, "bad_request", 16));
+  const clientMac = asClientFinishedMac(decodeBase64urlField(body.clientFinished, "bad_request", 32));
   if (!isObject(body.assertion)) {
     throw new WakeError("bad_request");
   }
@@ -53,12 +55,35 @@ async function parseCompleteBody(req: Request, options: ServerOptions): Promise<
 
 async function parseClientPublicKey(value: unknown): Promise<EcPublicKey> {
   try {
-    return await parseEcPublicKey(decodeBinary(value, "bad_request"));
+    return await parseEcPublicKey(decodeBase64urlField(value, "bad_request"));
   } catch (e) {
     if (e instanceof WakeError && e.code === "invalid_public_key") {
       throw new WakeError("bad_request");
     }
     throw e;
+  }
+}
+
+/**
+ * Applies the counter update stored with the committed exchange. updateSignCount is a max update and may
+ * run again after a failure; clearing is atomic, so only one caller notifies about an anomaly.
+ */
+async function applySignCountUpdate(update: SignCountUpdate, exchangeId: Uint8Array, options: ServerOptions): Promise<void> {
+  // App credentials are a separate store; this update follows the atomic login commit.
+  await options.credentials.updateSignCount(update.credentialId, update.signCount);
+  if (!await options.store.clearSignCountUpdate(exchangeId) || !update.anomaly) {
+    return;
+  }
+  // Notification failures do not roll back the committed exchange and session.
+  try {
+    await options.onCounterAnomaly?.({
+      credentialId: update.credentialId.slice(),
+      userId: update.userId,
+      storedSignCount: update.storedSignCount,
+      receivedSignCount: update.signCount,
+    });
+  } catch {
+    throw new WakeError("retry");
   }
 }
 
@@ -79,6 +104,9 @@ async function replay(
   if (!retained || retained.state !== "COMPLETED") {
     return null;
   }
+  if (retained.signCountUpdate) {
+    await applySignCountUpdate(retained.signCountUpdate, retained.exchangeId.toUint8Array(), options);
+  }
   return jsonTextResponse(ex.response);
 }
 
@@ -91,7 +119,7 @@ async function verifyLogin(
   if (ex.state !== "PENDING" || options.now() >= ex.expiresAt || !ex.serverPrivateKey) {
     throw new WakeError("auth_failed");
   }
-  return verifyAssertion(body.assertion, await kxChallenge(th), ex.requestedUserId, options);
+  return verifyAssertion(body.assertion, await kxChallenge(th), ex, options);
 }
 
 async function deriveLoginResult(
@@ -167,6 +195,13 @@ async function commitLogin(
   verified: VerifiedAssertion,
   options: ServerOptions,
 ): Promise<Response> {
+  const update: SignCountUpdate = {
+    credentialId: verified.credential.credentialId.slice(),
+    userId: verified.credential.userId,
+    signCount: verified.signCount,
+    storedSignCount: verified.credential.signCount,
+    anomaly: verified.counterAnomaly,
+  };
   const committed = await options.store.commitLogin({
     exchangeId: body.exchangeId.toUint8Array(),
     now: options.now(),
@@ -174,6 +209,7 @@ async function commitLogin(
     clientFinished: body.clientMac,
     response: result.response,
     session,
+    signCountUpdate: update,
   });
   if (!committed) {
     const ex = await options.store.getExchange(body.exchangeId.toUint8Array(), options.now());
@@ -183,21 +219,7 @@ async function commitLogin(
     }
     throw new WakeError("auth_failed");
   }
-  // App credentials are a separate store; this max update follows the atomic login commit.
-  await options.credentials.updateSignCount(verified.credential.credentialId, verified.signCount);
-  if (verified.counterAnomaly) {
-    // Notification failures do not roll back the committed exchange and session.
-    try {
-      await options.onCounterAnomaly?.({
-        credentialId: verified.credential.credentialId.slice(),
-        userId: verified.credential.userId,
-        storedSignCount: verified.credential.signCount,
-        receivedSignCount: verified.signCount,
-      });
-    } catch {
-      throw new WakeError("retry");
-    }
-  }
+  await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
   return jsonTextResponse(result.response);
 }
 

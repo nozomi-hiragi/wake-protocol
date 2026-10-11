@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes, DIR_S2C, WakeError, newSessionId, newExchangeId, seal, parseWire } from "@wake-protocol/core";
 import type { SessionRecord } from "../src/index.ts";
-import { fixture, login, prepare, wire, sendWire, opened, expectError, response, ORIGIN, decode } from "./helpers.ts";
+import { insertSession } from "../src/testing.ts";
+import { fixture, jsonRequest, login, prepare, wire, sendWire, opened, expectError, response, ORIGIN, decode } from "./helpers.ts";
 import type { Fixture, Login } from "./helpers.ts";
 
 async function session(f: Fixture, l: Login): Promise<SessionRecord> {
@@ -185,7 +186,7 @@ for (const field of ["absoluteExpiresAt", "hardCapAt", "idle"] as const) {
         const l = await login(f);
         const old = await session(f, l);
         const boundary = f.clock.now + 8000;
-        await f.store.createSession({ ...old, ...(field === "idle" ? { idleTimeoutSec: 8 } : { [field]: boundary }) });
+        insertSession(f.store, { ...old, ...(field === "idle" ? { idleTimeoutSec: 8 } : { [field]: boundary }) });
         f.clock.now = boundary + offset;
         const res = await sendWire(f, await wire(f, l));
         if (offset < 0) {
@@ -208,7 +209,7 @@ for (const idle of [8, 86400]) {
       const f = await fixture();
       const l = await login(f);
       const before = await session(f, l);
-      await f.store.createSession({ ...before, idleTimeoutSec: idle });
+      insertSession(f.store, { ...before, idleTimeoutSec: idle });
       const granularity = Math.min(idle * 1000 / 8, 900000);
       f.clock.now = before.lastActivityAt + granularity - 1;
       await opened(l, await sendWire(f, await wire(f, l)));
@@ -237,7 +238,8 @@ for (const row of [
       const current = await login(f);
       const currentState = await session(f, current);
       assert.ok(currentState.currentKeys);
-      await f.store.createSession(
+      insertSession(
+        f.store,
         {
           ...s,
           currentKeys: currentState.currentKeys,
@@ -270,7 +272,8 @@ test(
     const current = await login(f);
     const currentState = await session(f, current);
     assert.ok(currentState.currentKeys);
-    await f.store.createSession(
+    insertSession(
+      f.store,
       {
         ...s,
         currentKeys: currentState.currentKeys,
@@ -325,7 +328,7 @@ for (const revoke of ["session", "user", "credential", "lastAuthCredential"] as 
       const other = await login(f);
       const s = await session(f, l);
       if (revoke === "lastAuthCredential") {
-        await f.store.createSession({
+        insertSession(f.store, {
           ...s,
           loginCredentialId: new Uint8Array([2]),
           lastAuthCredentialId: f.auth.credential.credentialId
@@ -356,7 +359,7 @@ for (const direction of ["c2s", "s2c"] as const) {
       const l = await login(f);
       const s = await session(f, l);
       assert.ok(s.currentKeys);
-      await f.store.createSession({ ...s, currentKeys: { ...s.currentKeys, [`${direction}Count`]: 1 } });
+      insertSession(f.store, { ...s, currentKeys: { ...s.currentKeys, [`${direction}Count`]: 1 } });
       const request = await wire(f, l);
       const results = await Promise.all([sendWire(f, request), sendWire(f, request)]);
       assert.deepEqual(results.map(res => res.status).sort(), [200, 401]);
@@ -375,7 +378,7 @@ for (const direction of ["c2s", "s2c"] as const) {
         const l = await login(f);
         const s = await session(f, l);
         assert.ok(s.currentKeys);
-        await f.store.createSession({ ...s, currentKeys: { ...s.currentKeys, [`${direction}Count`]: count } });
+        insertSession(f.store, { ...s, currentKeys: { ...s.currentKeys, [`${direction}Count`]: count } });
         assert.equal((await opened(l, await sendWire(f, await wire(f, l)))).json.rekeyRecommended, count + 1 >= 2 ** 24);
       }
     );
@@ -438,7 +441,7 @@ test(
     const l = await login(f);
     const s = await session(f, l);
     assert.ok(s.currentKeys);
-    await f.store.createSession({ ...s, currentEpoch: 1, prevKeys: { ...s.currentKeys }, prevValidUntil: f.clock.now + 1 });
+    insertSession(f.store, { ...s, currentEpoch: 1, prevKeys: { ...s.currentKeys }, prevValidUntil: f.clock.now + 1 });
     await f.store.sweep(f.clock.now + 1);
     assert.ok((await session(f, l)).prevKeys);
     await f.store.sweep(f.clock.now + 2);
@@ -449,7 +452,7 @@ test(
   }
 );
 
-for (const error of [new Error("unavailable"), new WakeError("rate_limited"), undefined]) {
+for (const error of [new Error("unavailable"), undefined]) {
   test(
     `reservation failure returns retry without retrying ${String(error)}`,
     async () => {
@@ -500,7 +503,8 @@ test(
     await f.store.createExchange({ ...ex, exchangeId: id, sessionId: l.sessionId });
     const s = await session(f, l);
     const unrelatedId = newSessionId();
-    await f.store.createSession(
+    insertSession(
+      f.store,
       {
         ...s,
         sessionId: unrelatedId,
@@ -523,9 +527,9 @@ test(
     const f = await fixture();
     const l = await login(f);
     const s = await session(f, l);
-    await f.store.createSession({ ...s, status: "REVOKED" });
+    insertSession(f.store, { ...s, status: "REVOKED" });
     await expectError(await sendWire(f, await wire(f, l)), 401, "reauth", true);
-    await f.store.createSession({ ...s, currentKeys: undefined });
+    insertSession(f.store, { ...s, currentKeys: undefined });
     await expectError(await sendWire(f, await wire(f, l)), 401, "reauth", true);
   }
 );
@@ -537,7 +541,7 @@ for (const offset of [0, 1]) {
       const f = await fixture({ freshnessWindowMs: 100 });
       const l = await login(f);
       const before = await session(f, l);
-      await f.store.createSession({ ...before, idleTimeoutSec: 8 });
+      insertSession(f.store, { ...before, idleTimeoutSec: 8 });
       const granularity = 8 * 1000 / 8;
       f.clock.now = before.lastActivityAt + granularity + offset;
       let touches = 0;
@@ -553,3 +557,54 @@ for (const offset of [0, 1]) {
     }
   );
 }
+
+test(
+  "reservation rate_limited from the store is an outer 429 with Retry-After",
+  async () => {
+    for (const retryAfterSec of [undefined, 7]) {
+      const f = await fixture(retryAfterSec === undefined ? {} : { retryAfterSec });
+      const l = await login(f);
+      const reserve = f.store.reserveEncryptions.bind(f.store);
+      let attempts = 0;
+      f.store.reserveEncryptions = async (...args) => {
+        if (attempts++ === 0) {
+          throw new WakeError("rate_limited");
+        }
+        return reserve(...args);
+      };
+      const res = await sendWire(f, await wire(f, l));
+      await expectError(res, 429, "rate_limited", true);
+      assert.equal(res.headers.get("retry-after"), String(retryAfterSec ?? 1));
+      assert.equal(attempts, 1);
+      const state = await session(f, l);
+      assert.equal(state.currentKeys?.c2sCount, 0);
+    }
+  }
+);
+
+test(
+  "every outer and auth rate_limited response carries Retry-After, and other errors do not",
+  async () => {
+    const f = await fixture({ retryAfterSec: 3 });
+    const l = await login(f);
+    f.store.createExchange = async () => {
+      throw new WakeError("rate_limited");
+    };
+    const started = await jsonRequest(f.server, "/auth/start", { mode: "discoverable" });
+    await expectError(started, 429, "rate_limited");
+    assert.equal(started.headers.get("retry-after"), "3");
+    const get = f.store.getSession.bind(f.store);
+    f.store.getSession = async () => {
+      throw new WakeError("rate_limited");
+    };
+    const limited = await sendWire(f, await wire(f, l));
+    assert.equal(limited.headers.get("retry-after"), "3");
+    f.store.getSession = async () => {
+      throw new Error("unavailable");
+    };
+    const retry = await sendWire(f, await wire(f, l));
+    await expectError(retry, 503, "retry", true);
+    assert.equal(retry.headers.get("retry-after"), null);
+    f.store.getSession = get;
+  }
+);

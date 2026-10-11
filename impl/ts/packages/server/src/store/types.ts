@@ -54,9 +54,27 @@ export interface SessionRecord {
   hardCapAt: number;
   idleTimeoutSec: number;
   lastActivityAt: number;
+  /** Set when the session became REVOKED or EXPIRED; terminal sessions are swept after a retention period. */
+  endedAt?: number;
 }
 
-export interface ExchangeRecord {
+/** Who may complete an exchange. In username mode a null requestedUserId means the username is unknown. */
+export type ExchangeUser =
+  | { mode: "discoverable"; }
+  | { mode: "username"; requestedUserId: string | null; };
+
+/** Counter update that must be applied after the login commit; cleared once applied. */
+export interface SignCountUpdate {
+  credentialId: Uint8Array;
+  userId: string;
+  signCount: number;
+  storedSignCount: number;
+  anomaly: boolean;
+}
+
+export type ExchangeRecord = ExchangeBase & ExchangeUser;
+
+interface ExchangeBase {
   exchangeId: ExchangeId;
   sessionId: SessionId;
   kind: "login" | "rekey";
@@ -65,11 +83,10 @@ export interface ExchangeRecord {
   serverPublicKey: EcPublicKey;
   serverPrivateKey?: CryptoKey;
   expiresAt: number;
-  /** Undefined for discoverable mode, null for an unknown username. */
-  requestedUserId?: string | null;
   th?: LoginTranscriptHash;
   clientFinished?: ClientFinishedMac;
   response?: string;
+  signCountUpdate?: SignCountUpdate;
 }
 
 export interface LoginCommit {
@@ -79,6 +96,7 @@ export interface LoginCommit {
   clientFinished: ClientFinishedMac;
   response: string;
   session: SessionRecord;
+  signCountUpdate: SignCountUpdate;
 }
 
 /**
@@ -91,6 +109,11 @@ export interface WakeStore {
   createExchange(record: ExchangeRecord): Promise<void>;
   getExchange(exchangeId: Uint8Array, now: number): Promise<ExchangeRecord | null>;
   commitLogin(commit: LoginCommit): Promise<boolean>;
+  /**
+   * Clears the pending counter update of a committed exchange. Returns true only for the caller
+   * that actually cleared it, so the anomaly notification fires at most once.
+   */
+  clearSignCountUpdate(exchangeId: Uint8Array): Promise<boolean>;
   getSession(sessionId: Uint8Array): Promise<SessionRecord | null>;
   touchSession(sessionId: Uint8Array, now: number): Promise<void>;
   /** Reserve one c2s and one s2c use, only while ACTIVE, unexpired, with keys below limit. */
