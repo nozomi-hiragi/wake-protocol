@@ -14,8 +14,8 @@
 | `packages/core`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
 | `packages/vectors`（`@wake-protocol/vectors`） | §16 テストベクターの生成と照合。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
 | `packages/server`（`@wake-protocol/server`） | KX と SM のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
-| `packages/client`（`@wake-protocol/client`） | KX と SM のクライアント。ブラウザと Node で動く。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
-| `packages/demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client と `hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
+| `packages/client`（`@wake-protocol/client`） | KX と SM のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
+| `packages/demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
 
 `packages/` の主なファイル（各パッケージの `index.ts` が入口）:
 
@@ -124,7 +124,7 @@ await client.logout();               // wake/logout
 ```
 
 - credential の公開鍵は SPKI（ブラウザの `getPublicKey()` の値）で保存します。対応する署名方式は ES256 だけです。
-- 交換・セッションのストアは非同期のインターフェース（`WakeStore`）で、仮実装にはメモリのもの（`MemoryWakeStore`）だけがあります。鍵はプロセスのメモリに抽出不可の `CryptoKey` で置きます。DB に保存する場合は §8.10 の鍵の保護が必要です。
+- 交換・セッションのストアは非同期のインターフェース（`WakeStore`）で、仮実装にはメモリのもの（`MemoryWakeStore`）だけがあります。鍵はプロセスのメモリに抽出不可の `CryptoKey` で置きます。DB に保存する場合は §8.10 の鍵の保護が必要です。`MemoryWakeStore` は交換を作るときに一定間隔（既定60秒）で期限切れの交換と終了したセッションを掃除します。要求が来ない間も掃除したい場合は、使う側が `sweep(now)` を定期的に呼びます。
 - クライアントの鍵はメモリにだけ置きます（IndexedDB には保存しません）。ページを読み込み直すと、もう一度ログインが必要です。
 - §14.3 のレート制限は実装していません。本番で使わないでください。
 - 仕様が決めていない点の扱いは [SPEC-NOTES.md](SPEC-NOTES.md#m2-で見つかった論点) にまとめています。

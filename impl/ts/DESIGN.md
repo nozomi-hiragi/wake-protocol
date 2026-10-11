@@ -13,9 +13,9 @@
           ↑
 @wake-protocol/vectors  core、bytes、codec、@scure/base      §16 テストベクターの生成と照合（開発用）
 @wake-protocol/server   core、bytes、codec、crypto、@scure/base   KX と SM のサーバー（フレームワーク非依存）
-@wake-protocol/client   core、bytes、codec、crypto、@scure/base   KX と SM のクライアント（ブラウザと Node）
+@wake-protocol/client   core、bytes、codec、@scure/base           KX と SM のクライアント（ブラウザと Node）
           ↑
-@wake-protocol/demo     server、client、汎用パッケージ、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
+@wake-protocol/demo     server、client、codec、crypto、@scure/base、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```
 
 - **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。
@@ -133,7 +133,7 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 | ECDSA の DER 署名 | 自前（crypto の `ecdsaDerToRaw` / `ecdsaRawToDer`）。Web Crypto は `r‖s` 形式しか受け付けない。厳密な DER の解析は50行ほどで、非最小の整数・余分なバイト・長形式の長さを拒否することをテストで確かめている |
 | 厳密な JSON（I-JSON） | 自前（codec の `parseIJson`）。`JSON.parse` は重複したキーや孤立サロゲートを受け付けてしまう。§4.8 はこれらの拒否を求める |
 | HTTP サーバー（demo のみ） | `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）。どちらも実行時の依存がない。server 本体は `Request` / `Response` だけを使うので、フレームワークは差し替えられる |
-| ブラウザ用のバンドル（demo の開発用） | `esbuild` 0.28.2（MIT）。実行時の依存はなく、プラットフォームごとのバイナリだけを持つ |
+| ブラウザ用のバンドル（demo の開発用） | `esbuild` 0.28.2（MIT）。実行時の依存はなく、プラットフォームごとのバイナリを `optionalDependencies`（`@esbuild/<OS>-<CPU>`）で持つ。`postinstall` スクリプト（`install.js`）がバイナリの場所を確かめて最適化するが、`npm ci --ignore-scripts` で実行しなくても、optionalDependencies のバイナリで動く |
 | e2e（demo の開発用） | `@playwright/test` 1.63.0（Apache-2.0）。依存は `playwright` だけ。Chromium の仮想認証器（CDP の `WebAuthn` ドメイン）で、ブラウザのパスキーを使ったログインを確かめる |
 
 `TextDecoder("latin1")` は使いません。実際には Windows-1252 として扱われ、`0x80` が U+20AC（€）になるので、ET の obs-text が壊れます。
