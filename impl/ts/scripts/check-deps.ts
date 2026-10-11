@@ -35,10 +35,13 @@ export function checkDependencies(root: string): { offenders: string[]; count: n
     const dependencies = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies });
     // src/ must declare its imports as runtime dependencies (not devDependencies).
     const runtime = new Set(Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies }));
+    // A root dev dependency may be declared only as this package's devDependencies, never as a runtime dependency.
+    const ownDev = new Set(Object.keys(pkg.devDependencies ?? {}));
     count++;
     if (!(pkg.name in allowedEdges)) offenders.push(`${relative(root, dir)}: unknown package ${pkg.name}`);
     for (const name of dependencies) {
-      if (!allowed.has(name) && !(rootDev.includes(name) && !name.startsWith("@wake-protocol/"))) {
+      const rootDevOk = ownDev.has(name) && !runtime.has(name) && rootDev.includes(name) && !name.startsWith("@wake-protocol/");
+      if (!allowed.has(name) && !rootDevOk) {
         offenders.push(`${relative(root, join(dir, "package.json"))}: ${name} (forbidden dependency)`);
       }
     }

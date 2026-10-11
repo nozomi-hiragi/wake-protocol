@@ -58,7 +58,7 @@
 | `vectors/test/vectors.test.ts` | §16 保存済みベクターと実装の照合 |
 | `vectors/test/generate.test.ts` | §16 生成結果の安定性の検査 |
 
-`npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは、ルートの開発用依存と Node の組み込みモジュールだけです。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
+`npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import でき、宣言はパッケージ自身の `devDependencies` にだけできます。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
 
 ## 使い方
 

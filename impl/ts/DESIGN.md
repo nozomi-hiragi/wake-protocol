@@ -27,7 +27,7 @@
 - `Brand` と長さを検査する `fixedLength` は汎用なので bytes に置きます。`SessionId` などのブランド型の一覧と `as*` 関数は、core の `spec/types.ts` に置きます。
 
 ### 2.2 依存は一方向にし、汎用パッケージどうしは依存しない
-- パッケージ間の依存と外部の実行時依存は、`scripts/check-deps.ts` の `allowedEdges` に明示しています。`npm test` は、`package.json` の宣言と import の両方をこの表と照合します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import できます。`src/` からは import できず、`src/` の import は `allowedEdges` に加えてパッケージ自身の `dependencies` / `peerDependencies` / `optionalDependencies` に宣言されている必要があります。依存を足すには表を変える必要があるので、PR で理由を説明してください。
+- パッケージ間の依存と外部の実行時依存は、`scripts/check-deps.ts` の `allowedEdges` に明示しています。`npm test` は、`package.json` の宣言と import の両方をこの表と照合します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import できます。`src/` からは import できず、`src/` の import は `allowedEdges` に加えてパッケージ自身の `dependencies` / `peerDependencies` / `optionalDependencies` に宣言されている必要があります。ルートの開発用依存は、パッケージ自身の `devDependencies` にだけ宣言できます。依存を足すには表を変える必要があるので、PR で理由を説明してください。
 - パッケージの中でも、下の層は上の層を知りません。たとえば `msg/`（暗号化メッセージ）は、その上で運ぶ `et/` に依存しません。`DEFAULT_MAX_PLAINTEXT` は数値の定数にして、ET の最大長を覆っていることはテストで確かめています。
 
 ### 2.3 標準の型で書けるものは標準の型で書く
