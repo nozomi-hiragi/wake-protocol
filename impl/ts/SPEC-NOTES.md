@@ -34,7 +34,8 @@ KX と SM をブラウザと Node のサーバーで動かして（M2）、決�
 | `crossOrigin` 以外の clientData の項目 | §6.2 手順3 | `topOrigin` があれば拒否する（`crossOrigin` が `true` の場合に付く項目のため）。`crossOrigin` は、ないか `false` のときだけ受理する |
 | authenticatorData の拡張 | §6.2 | AT フラグが立っていれば拒否する。ED フラグが立っている場合、末尾の拡張データは解析せずに受理する（署名の対象には含まれる）。ただし拡張データがない（長さが37バイトちょうど）ものは拒否する。ED が立っていなければ長さは37バイトちょうど。BE なしで BS が立っているものは拒否する |
 | `userHandle` が省略された場合 | §6.2 手順8 | discoverable でも省略を許す。ユーザーは credential ID で引いた credential から決まるため |
-| 偽の credential ID の作り方 | §6.6 | `HMAC(サーバー秘密, LP("wake-server fake-credential", username, u32(i), u32(block)))` を必要な長さまで連結し、設定した長さ（16〜64バイト、既定32）で、設定した件数（1〜16、既定1）返す。実在ユーザーでも同じ HMAC の計算をする。実在ユーザーの credential ID の長さと件数の分布にそろえることと、応答時間の調整は実装者に残る |
+| 偽の credential ID の作り方 | §6.6 | `HMAC(サーバー秘密, LP("wake-server fake-credential", username, u32(i), u32(block)))` を必要な長さまで連結し、設定した長さ（16〜64バイト、既定32）で、設定した件数（1〜16、既定1）返す。実在ユーザーでも同じ HMAC の計算をし、有効な credential が設定した件数より少なければ、偽の ID で設定した件数まで埋める。応答時間の調整は実装者に残る |
+| §6.6 の「同じ件数分布」の限界 | §6.6 | 偽の ID で件数を埋めても、設定した件数より多くの credential を持つユーザーは件数から、また実在の credential ID の長さ（認証器ごとに16〜64バイトなどと異なる）は長さの分布から見分けられる。件数の設定はユーザーが持てる credential の最大数に合わせるとよいが、ID の長さまで含めると、仕様の「実在ユーザーと区別できない応答」は完全には満たせない。username 方式を使うなら、この限界を前提にするか、discoverable 方式を勧めることになる |
 | `allowCredentials` の `transports` | §6.1、§6.6 | §6.1 の例には `transports` があるが、本物の credential は保存した値、偽の credential は固定値になり、1回の応答で区別できてしまう。仮実装では、本物にも偽物にも `transports` を付けない |
 | 未知のユーザー名でログインしたとき | §6.6 | 偽の credential ID は認証器に存在しないので、正しく動く認証器では `navigator.credentials.get()` がブラウザ側で失敗し（`NotAllowedError`）、サーバーには何も届かない。ユーザーに何を見せるかは仕様に書かれていない。デモでは、その失敗をそのまま表示する |
 | ユーザー名の長さ | §7.2 | 規定がないので、1〜256（UTF-16 の単位）とした |

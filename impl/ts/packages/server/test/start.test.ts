@@ -1,7 +1,7 @@
 // Tests for WAKE server behavior (spec §6.6, §7.2).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fixture, start, jsonRequest, expectError, decode, encode, ORIGIN, response } from "./helpers.ts";
+import { fixture, start, prepare, jsonRequest, expectError, decode, encode, ORIGIN, response } from "./helpers.ts";
 import { SoftAuthenticator } from "../src/testing.ts";
 
 test(
@@ -52,6 +52,54 @@ test(
         }
       ]
     );
+  }
+);
+
+test(
+  "username descriptors pad active credentials to the configured count and preserve real credential order",
+  async () => {
+    const f = await fixture({ fakeCredentialCount: 3, fakeCredentialIdLength: 16 });
+    const suspended = await SoftAuthenticator.create({ rpId: "example.com", origin: ORIGIN, userId: "u1" });
+    f.credentials.setCredential({ ...suspended.credential, status: "suspended" }, "alice");
+
+    const unknown = await start(f, { mode: "username", username: "missing" });
+    assert.equal(unknown.webauthn.allowCredentials.length, 3);
+    f.credentials.setCredential({ ...f.auth.credential, status: "suspended" }, "alice");
+    const fake = await start(f, { mode: "username", username: "alice" });
+    f.credentials.setCredential(f.auth.credential, "alice");
+    const one = await start(f, { mode: "username", username: "alice" });
+    const fakeIds = fake.webauthn.allowCredentials.map(item => item.id);
+    const oneIds = one.webauthn.allowCredentials.map(item => item.id);
+    assert.equal(oneIds.length, 3);
+    assert.equal(oneIds[0], encode(f.auth.credential.credentialId));
+    assert.deepEqual(oneIds.slice(1), fakeIds.slice(1));
+    assert.equal(new Set(oneIds).size, 3);
+
+    const prepared = await prepare(f, {}, { mode: "username", username: "alice" });
+    assert.equal(prepared.info.webauthn.allowCredentials.length, 3);
+    assert.equal(prepared.info.webauthn.allowCredentials[0]!.id, encode(f.auth.credential.credentialId));
+    assert.equal((await jsonRequest(f.server, "/auth/complete", prepared.body)).status, 200);
+    assert.equal((await f.store.getSession(decode(prepared.info.sessionId)))?.status, "ACTIVE");
+
+    const second = await SoftAuthenticator.create({ rpId: "example.com", origin: ORIGIN, userId: "u1" });
+    const third = await SoftAuthenticator.create({ rpId: "example.com", origin: ORIGIN, userId: "u1" });
+    const fourth = await SoftAuthenticator.create({ rpId: "example.com", origin: ORIGIN, userId: "u1" });
+    f.credentials.setCredential(second.credential, "alice");
+    f.credentials.setCredential(third.credential, "alice");
+    const three = await start(f, { mode: "username", username: "alice" });
+    assert.deepEqual(three.webauthn.allowCredentials.map(item => item.id), [
+      encode(f.auth.credential.credentialId),
+      encode(second.credential.credentialId),
+      encode(third.credential.credentialId)
+    ]);
+    f.credentials.setCredential(fourth.credential, "alice");
+    const four = await start(f, { mode: "username", username: "alice" });
+    assert.deepEqual(four.webauthn.allowCredentials.map(item => item.id), [
+      encode(f.auth.credential.credentialId),
+      encode(second.credential.credentialId),
+      encode(third.credential.credentialId),
+      encode(fourth.credential.credentialId)
+    ]);
   }
 );
 
@@ -297,7 +345,7 @@ for (const length of [16, 17, 31, 32, 33, 48, 63, 64]) {
       const real = await start(f, { mode: "username", username: "alice" });
       const fake = await start(f, { mode: "username", username: "nobody" });
       assert.equal(fake.webauthn.allowCredentials.length, 2);
-      assert.equal(real.webauthn.allowCredentials.length, 1);
+      assert.equal(real.webauthn.allowCredentials.length, 2);
       for (const item of [...real.webauthn.allowCredentials, ...fake.webauthn.allowCredentials]) {
         assert.deepEqual(Object.keys(item).sort(), ["id", "type"]);
         assert.equal(item.type, "public-key");

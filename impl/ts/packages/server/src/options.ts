@@ -27,6 +27,10 @@ export interface WakeServerOptions {
   completedRetentionMs?: number;
   maxPlaintext?: number;
   maxAuthBody?: number;
+  /**
+   * Set to the maximum number of credentials a user can have. Users above this count and real credential ID length
+   * distributions remain distinguishable in username mode.
+   */
   fakeCredentialCount?: number;
   fakeCredentialIdLength?: number;
   maxEncryptionsPerKey?: number;

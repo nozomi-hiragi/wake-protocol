@@ -60,6 +60,9 @@ async function resolveUsername(username: unknown, options: ServerOptions): Promi
       type: "public-key" as const,
       id: base64urlnopad.encode(c.credentialId),
     })) ?? [];
+  if (active.length && active.length < options.fakeCredentialCount) {
+    active.push(...fake.slice(active.length));
+  }
   return {
     requestedUserId: active.length ? user!.userId : null,
     allowCredentials: active.length ? active : fake,
