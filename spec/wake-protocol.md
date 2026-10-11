@@ -28,6 +28,7 @@
 | ETのエラー | クエリの違反は`invalid_path`、`EtRequest` / `EtResponse`の形式不正は`invalid_request`と明記（§11.6） |
 | 明確化 | Challengeの儀式とTranscriptのmodeの対応（§5.5）、時刻は2⁵³−1以下（§4.6）、ヘッダー全体の長さの数え方と`location`の範囲（§11.4）、平文長の上限の扱い（§8.7） |
 | テストベクター | 異常系の`expectedError`コード一覧とJSONでの表し方を定義（§16）。`spec/test-vectors/`に収録 |
+| WAKE-KX | `/auth/start`の応答に`serverTime`を追加（§7.2）。クライアントは`expiresAt`を端末の時刻に換算して、`/auth/complete`の再送の期限に使う（§7.7）。端末の時計がずれていても、再送の期限を正しく判断できるようにするため |
 
 ### 0.1 v0.3からv0.4への主な変更
 
@@ -475,12 +476,15 @@ Client                                             Server
   "epoch": 0,
   "serverNonce": "<base64url 32B>",
   "serverPublicKey": "<base64url 65B>",
+  "serverTime": 1791590400000,
   "expiresAt": 1791590700000,
   "webauthn": { "rpId": "example.com", "allowCredentials": [], "userVerification": "required", "timeout": 270000 }
 }
 ```
 
 `sessionId`は予約された識別子であり、これだけでは何の権限も持たない。
+
+`serverTime`は応答を作った時点のサーバー時刻（ミリ秒）である。クライアントは`expiresAt`を端末の時刻とそのまま比べてはならない（MUST NOT）。`serverTime`は認証されていないため、再送の期限の判断（§7.7）にだけ使い、セッションの時刻補正（§8.5）には使わない。
 
 ### 7.3 `POST /auth/complete`
 
@@ -569,7 +573,7 @@ procedure AuthComplete(req):
 2. 一時ECDH鍵ペアを生成する（秘密鍵は抽出不可）。
 3. `th`と`challenge`を計算し、`options.challenge`に設定して`navigator.credentials.get()`を呼ぶ。
 4. `ss`を導出し、`k_c2s`・`k_s2c`を抽出不可のAES-GCM鍵、`fk_c`・`fk_s`をHMAC鍵として導出する。`clientFinished`を計算し、一時秘密鍵と`ss`を破棄する。
-5. `/auth/complete`の要求本文を保持する。ネットワークエラーの場合は、交換の`expiresAt`まで**同じ本文**を再送する。
+5. `/auth/complete`の要求本文を保持し、最初の1回は必ず送る。ネットワークエラーの場合は、交換の期限まで**同じ本文**を再送する。期限は端末の時刻に換算して判断する。`/auth/start`の応答を受け取った時点の端末時刻を`t₀`とすると、期限は`t₀ + (expiresAt − serverTime)`である。
 6. `serverFinished`を検証する。失敗した場合はすべての鍵を破棄し、最初からやり直す。
 7. 鍵・`th`・時刻のオフセット（§8.5）を保存し、セッションを`ACTIVE`とする。
 
