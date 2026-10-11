@@ -1,0 +1,22 @@
+{
+  "name": "@wake-protocol/server",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@wake-protocol/core": "0.0.0",
+    "@wake-protocol/bytes": "0.0.0",
+    "@wake-protocol/codec": "0.0.0",
+    "@wake-protocol/crypto": "0.0.0",
+    "@scure/base": "2.4.0"
+  }
+}

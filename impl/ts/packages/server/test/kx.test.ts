@@ -1,0 +1,317 @@
+// Tests for WAKE server behavior (spec §7.5–§7.8).
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { generateEphemeral } from "@wake-protocol/core";
+import { fixture, prepare, login, jsonRequest, expectError, decode, encode } from "./helpers.ts";
+import type { LoginCommit } from "../src/index.ts";
+
+test(
+  "KX verifies serverFinished, establishes session and erases ephemeral private key",
+  async () => {
+    const f = await fixture();
+    const p = await login(f);
+    const session = await f.store.getSession(p.sessionId.toUint8Array());
+    assert.equal(session?.status, "ACTIVE");
+    assert.equal(session?.userId, "u1");
+    assert.equal(session?.establishedOrigin, "https://example.com");
+    assert.equal(session?.currentEpoch, 0);
+    assert.equal(session?.authTime, f.clock.now);
+    assert.equal(session?.absoluteExpiresAt, f.clock.now + 7 * 86400000);
+    assert.equal(session?.hardCapAt, f.clock.now + 30 * 86400000);
+    assert.equal(session?.currentKeys?.c2s.extractable, false);
+    assert.equal(session?.currentKeys?.s2c.extractable, false);
+    assert.ok(session?.currentKeys?.th.equals(p.th));
+    const exchange = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+    assert.equal(exchange?.state, "COMPLETED");
+    assert.equal(exchange?.serverPrivateKey, undefined);
+  }
+);
+
+test(
+  "failed Finished leaves exchange available for a correct retry",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    await expectError(
+      await jsonRequest(f.server, "/auth/complete", { ...p.body, clientFinished: encode(new Uint8Array(32)) }),
+      401,
+      "auth_failed"
+    );
+    assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "PENDING");
+    assert.equal((await jsonRequest(f.server, "/auth/complete", p.body)).status, 200);
+  }
+);
+
+test(
+  "completed replay is byte-identical and skips all assertion revalidation",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    const first = await jsonRequest(f.server, "/auth/complete", p.body);
+    assert.equal(first.status, 200);
+    const text = await first.text();
+    f.credentials.setCredential({ ...f.auth.credential, status: "suspended" }, "alice");
+    f.clock.now++;
+    const replay = await jsonRequest(f.server, "/auth/complete", { ...p.body, assertion: { bad: true } });
+    assert.equal(replay.status, 200);
+    assert.equal(await replay.text(), text);
+    await expectError(
+      await jsonRequest(f.server, "/auth/complete", { ...p.body, clientFinished: encode(new Uint8Array(32)) }),
+      401,
+      "auth_failed"
+    );
+    const different = await generateEphemeral();
+    await expectError(
+      await jsonRequest(f.server, "/auth/complete", { ...p.body, clientPublicKey: encode(different.publicKey.toUint8Array()) }),
+      401,
+      "auth_failed"
+    );
+  }
+);
+
+test(
+  "two concurrent valid completions commit one session and return identical cached bytes",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    let successfulCommits = 0;
+    const commit = f.store.commitLogin.bind(f.store);
+    f.store.commitLogin = async (value: LoginCommit) => {
+      const result = await commit(value);
+      if (result) {
+        successfulCommits++;
+      }
+      return result;
+    };
+    const [a, b] = await Promise.all([
+      jsonRequest(f.server, "/auth/complete", p.body),
+      jsonRequest(f.server, "/auth/complete", p.body)
+    ]);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+    assert.equal(await a.text(), await b.text());
+    assert.equal(successfulCommits, 1);
+    assert.ok(await f.store.getSession(p.sessionId.toUint8Array()));
+  }
+);
+
+for (const offset of [-1, 0]) {
+  test(
+    `exchange expiry boundary offset ${offset}`,
+    async () => {
+      const f = await fixture();
+      const p = await prepare(f);
+      f.clock.now = p.info.expiresAt + offset;
+      const res = await jsonRequest(f.server, "/auth/complete", p.body);
+      if (offset < 0) {
+        assert.equal(res.status, 200);
+      } else {
+        await expectError(res, 401, "auth_failed");
+        const ex = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+        assert.equal(ex?.state, "EXPIRED");
+        assert.equal(ex?.serverPrivateKey, undefined);
+      }
+    }
+  );
+}
+
+test(
+  "exchange expiry during awaited verification is checked at atomic commit",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    const lookup = f.credentials.getCredential.bind(f.credentials);
+    f.credentials.getCredential = async id => {
+      const credential = await lookup(id);
+      f.clock.now = p.info.expiresAt;
+      return credential;
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+    assert.equal(await f.store.getSession(p.sessionId.toUint8Array()), null);
+  }
+);
+
+test(
+  "exchange is looked up before public-key parsing",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    await expectError(
+      await jsonRequest(f.server, "/auth/complete", { ...p.body, exchangeId: encode(new Uint8Array(16)), clientPublicKey: "broken" }),
+      401,
+      "auth_failed"
+    );
+  }
+);
+
+for (const kind of ["rekey", "expired", "superseded"] as const) {
+  test(
+    `KX rejects ${kind} exchange before credential lookup`,
+    async () => {
+      const f = await fixture();
+      const p = await prepare(f);
+      const read = f.store.getExchange.bind(f.store);
+      let credentialLookups = 0;
+      f.store.getExchange = async (...args) => {
+        const ex = await read(...args);
+        return ex ?
+          {
+            ...ex,
+            kind: kind === "rekey" ? "rekey" : "login",
+            state: kind === "expired" ? "EXPIRED" : kind === "superseded" ? "SUPERSEDED" : "PENDING"
+          } :
+          null;
+      };
+      f.credentials.getCredential = async () => {
+        credentialLookups++;
+        throw new Error("must not lookup");
+      };
+      await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+      assert.equal(credentialLookups, 0);
+    }
+  );
+}
+
+for (const key of [
+  new Uint8Array(33).fill(2),
+  new Uint8Array([4, ...new Uint8Array(64)]),
+  new Uint8Array(65).fill(6)
+]) {
+  test(
+    `KX rejects public key ${key.length}/${key[0]}`,
+    async () => {
+      const f = await fixture();
+      const p = await prepare(f);
+      await expectError(await jsonRequest(f.server, "/auth/complete", { ...p.body, clientPublicKey: encode(key) }), 400, "bad_request");
+    }
+  );
+}
+
+for (const change of [
+  { exchangeId: "AA=" },
+  { exchangeId: encode(new Uint8Array(15)) },
+  { clientFinished: "AA=" },
+  { clientFinished: encode(new Uint8Array(31)) },
+  { assertion: null },
+  { assertion: [] }
+]) {
+  test(
+    `KX rejects malformed outer body ${JSON.stringify(change)}`,
+    async () => {
+      const f = await fixture();
+      const p = await prepare(f);
+      await expectError(await jsonRequest(f.server, "/auth/complete", { ...p.body, ...change }), 400, "bad_request");
+    }
+  );
+}
+
+test(
+  "sweep retains completed replay until retention then removes it",
+  async () => {
+    const f = await fixture({ completedRetentionMs: 10 });
+    const p = await prepare(f);
+    const first = await jsonRequest(f.server, "/auth/complete", p.body);
+    assert.equal(first.status, 200);
+    const text = await first.text();
+    f.clock.now = p.info.expiresAt + 9;
+    await f.store.sweep(f.clock.now);
+    const replay = await jsonRequest(f.server, "/auth/complete", p.body);
+    assert.equal(replay.status, 200);
+    assert.equal(await replay.text(), text);
+    f.clock.now++;
+    await f.store.sweep(f.clock.now);
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+  }
+);
+
+test(
+  "sweep expires pending exchange, drops key and deletes after retention",
+  async () => {
+    const f = await fixture({ completedRetentionMs: 10 });
+    const p = await prepare(f);
+    await f.store.sweep(p.info.expiresAt - 1);
+    assert.ok((await f.store.getExchange(decode(p.info.exchangeId), p.info.expiresAt - 1))?.serverPrivateKey);
+    await f.store.sweep(p.info.expiresAt);
+    const ex = await f.store.getExchange(decode(p.info.exchangeId), p.info.expiresAt);
+    assert.equal(ex?.state, "EXPIRED");
+    assert.equal(ex?.serverPrivateKey, undefined);
+    await f.store.sweep(p.info.expiresAt + 10);
+    assert.equal(await f.store.getExchange(decode(p.info.exchangeId), p.info.expiresAt + 10), null);
+  }
+);
+
+for (const body of ["null", "[]", "{}", '{"a":1,"a":1}', '{"a":"\\ud800"}', '{"a":9007199254740992}']) {
+  test(
+    `complete rejects strict outer JSON ${body}`,
+    async () => {
+      const f = await fixture();
+      const res = await f.server.handle(
+        new Request("https://example.com/auth/complete", { method: "POST", headers: { "content-type": "application/json" }, body })
+      );
+      assert.ok(res);
+      await expectError(res, 400, "bad_request");
+    }
+  );
+}
+
+test(
+  "complete enforces content type and body length before exchange lookup",
+  async () => {
+    const f = await fixture({ maxAuthBody: 32 });
+    let lookups = 0;
+    f.store.getExchange = async () => {
+      lookups++;
+      throw new Error("must not lookup");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", {}, { "content-type": "text/plain" }), 400, "bad_request");
+    await expectError(await jsonRequest(f.server, "/auth/complete", { padding: "x".repeat(32) }), 400, "bad_request");
+    assert.equal(lookups, 0);
+  }
+);
+
+test(
+  "auth unexpected store failures map to retry and rate limit to 429",
+  async () => {
+    const { WakeError } = await import("@wake-protocol/core");
+    const f = await fixture();
+    const p = await prepare(f);
+    f.store.getExchange = async () => {
+      throw new Error("unavailable");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 503, "retry");
+    f.store.getExchange = async () => {
+      throw new WakeError("rate_limited");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 429, "rate_limited");
+  }
+);
+
+test(
+  "counter max is preserved for concurrent independently valid logins",
+  async () => {
+    const f = await fixture({}, { rpId: "example.com", origin: "https://example.com", userId: "u1", backupEligible: true });
+    const [high, low] = await Promise.all([prepare(f, { signCount: 8 }), prepare(f, { signCount: 3 })]);
+    const results = await Promise.all([
+      jsonRequest(f.server, "/auth/complete", high.body),
+      jsonRequest(f.server, "/auth/complete", low.body)
+    ]);
+    for (const res of results) {
+      assert.equal(res.status, 200);
+    }
+    assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 8);
+  }
+);
+
+test(
+  "outer exchangeId rejects nonzero unused low four bits as bad_request",
+  async () => {
+    const f = await fixture();
+    const p = await prepare(f);
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const value = p.body.exchangeId;
+    const last = alphabet.indexOf(value.at(-1)!);
+    assert.equal(last & 15, 0);
+    const noncanonical = value.slice(0, -1) + alphabet[last | 1]!;
+    await expectError(await jsonRequest(f.server, "/auth/complete", { ...p.body, exchangeId: noncanonical }), 400, "bad_request");
+  }
+);

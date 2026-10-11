@@ -11,6 +11,7 @@ const allowedEdges: Record<string, readonly string[]> = {
   "@wake-protocol/crypto": ["@scure/base"],
   "@wake-protocol/core": ["@wake-protocol/bytes", "@wake-protocol/codec", "@wake-protocol/crypto", "@scure/base"],
   "@wake-protocol/vectors": ["@wake-protocol/core", "@wake-protocol/bytes", "@wake-protocol/codec", "@scure/base"],
+  "@wake-protocol/server": ["@wake-protocol/core", "@wake-protocol/bytes", "@wake-protocol/codec", "@wake-protocol/crypto", "@scure/base"],
 };
 
 const readPackage = (dir: string) => JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
