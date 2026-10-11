@@ -188,6 +188,55 @@ for (const backupEligible of [false, true]) {
   );
 }
 
+test("concurrent BE=false completions replay identical bytes after a counter CAS failure", async () => {
+  const f = await fixture();
+  const p = await prepare(f, { signCount: 1 });
+  const counts = synchronizeCredentialLookups(f);
+  let release!: () => void;
+  const committed = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  let comparisons = 0;
+  let failedComparisons = 0;
+  const compare = f.credentials.compareAndSetSignCount.bind(f.credentials);
+  f.credentials.compareAndSetSignCount = async (id, expected, next) => {
+    comparisons++;
+    assert.equal(expected, 0);
+    assert.equal(next, 1);
+    if (comparisons === 2) {
+      await committed;
+    }
+    const result = await compare(id, expected, next);
+    if (!result) {
+      failedComparisons++;
+      assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "COMPLETED");
+    }
+    return result;
+  };
+  let successfulCommits = 0;
+  const commit = f.store.commitLogin.bind(f.store);
+  f.store.commitLogin = async (value: LoginCommit) => {
+    const result = await commit(value);
+    if (result) {
+      successfulCommits++;
+      release();
+    }
+    return result;
+  };
+  const [a, b] = await Promise.all([
+    jsonRequest(f.server, "/auth/complete", p.body),
+    jsonRequest(f.server, "/auth/complete", p.body)
+  ]);
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  assert.equal(await a.text(), await b.text());
+  assert.deepEqual(counts, [0, 0]);
+  assert.equal(comparisons, 2);
+  assert.equal(failedComparisons, 1);
+  assert.equal(successfulCommits, 1);
+  assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "ACTIVE");
+});
+
 test("cloned BE=false credentials with the same next counter cannot complete separate exchanges", async () => {
   const f = await fixture();
   const pending = await Promise.all([prepare(f, { signCount: 1 }), prepare(f, { signCount: 1 })]);

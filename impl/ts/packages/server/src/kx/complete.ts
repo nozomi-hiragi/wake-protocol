@@ -200,6 +200,11 @@ async function commitLogin(
   let update: SignCountUpdate | undefined;
   if (!credential.backupEligible && verified.signCount > credential.signCount) {
     if (!await options.credentials.compareAndSetSignCount(credential.credentialId, credential.signCount, verified.signCount)) {
+      const ex = await options.store.getExchange(body.exchangeId.toUint8Array(), options.now());
+      const cached = await replay(ex, th, body.clientMac, options);
+      if (cached) {
+        return cached;
+      }
       throw new WakeError("auth_failed");
     }
     // A later commit failure only leaves the counter advanced, which is safe; no replay update is needed.
