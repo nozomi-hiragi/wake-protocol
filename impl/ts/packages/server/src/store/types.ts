@@ -27,6 +27,8 @@ export interface WakeCredential {
 export interface CredentialStore {
   getCredential(credentialId: Uint8Array): Promise<WakeCredential | null>;
   findUserByUsername(username: string): Promise<{ userId: string; credentials: WakeCredential[] } | null>;
+  /** Atomically advances the counter only if it equals expected, across store instances. */
+  compareAndSetSignCount(credentialId: Uint8Array, expected: number, next: number): Promise<boolean>;
   updateSignCount(credentialId: Uint8Array, signCount: number): Promise<void>;
 }
 
@@ -96,7 +98,7 @@ export interface LoginCommit {
   clientFinished: ClientFinishedMac;
   response: string;
   session: SessionRecord;
-  signCountUpdate: SignCountUpdate;
+  signCountUpdate?: SignCountUpdate;
 }
 
 /**

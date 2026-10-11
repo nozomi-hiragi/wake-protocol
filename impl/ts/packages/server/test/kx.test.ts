@@ -3,7 +3,29 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateEphemeral } from "@wake-protocol/core";
 import { fixture, prepare, login, jsonRequest, expectError, decode, encode } from "./helpers.ts";
+import type { Fixture } from "./helpers.ts";
 import type { LoginCommit } from "../src/index.ts";
+
+function synchronizeCredentialLookups(f: Fixture): number[] {
+  const lookup = f.credentials.getCredential.bind(f.credentials);
+  const counts: number[] = [];
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  f.credentials.getCredential = async id => {
+    const credential = await lookup(id);
+    if (counts.length < 2) {
+      counts.push(credential!.signCount);
+      if (counts.length === 2) {
+        release();
+      }
+      await ready;
+    }
+    return credential;
+  };
+  return counts;
+}
 
 test(
   "KX verifies serverFinished, establishes session and erases ephemeral private key",
@@ -32,13 +54,22 @@ test(
   async () => {
     const f = await fixture();
     const p = await prepare(f);
+    let counterComparisons = 0;
+    const compare = f.credentials.compareAndSetSignCount.bind(f.credentials);
+    f.credentials.compareAndSetSignCount = async (...args) => {
+      counterComparisons++;
+      return compare(...args);
+    };
     await expectError(
       await jsonRequest(f.server, "/auth/complete", { ...p.body, clientFinished: encode(new Uint8Array(32)) }),
       401,
       "auth_failed"
     );
     assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "PENDING");
+    assert.equal(counterComparisons, 0);
+    assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 0);
     assert.equal((await jsonRequest(f.server, "/auth/complete", p.body)).status, 200);
+    assert.equal(counterComparisons, 1);
   }
 );
 
@@ -47,14 +78,25 @@ test(
   async () => {
     const f = await fixture();
     const p = await prepare(f);
+    let counterComparisons = 0;
+    const compare = f.credentials.compareAndSetSignCount.bind(f.credentials);
+    f.credentials.compareAndSetSignCount = async (...args) => {
+      counterComparisons++;
+      return compare(...args);
+    };
+    f.credentials.updateSignCount = async () => {
+      throw new Error("CAS logins need no post-commit update");
+    };
     const first = await jsonRequest(f.server, "/auth/complete", p.body);
     assert.equal(first.status, 200);
+    assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.signCountUpdate, undefined);
     const text = await first.text();
     f.credentials.setCredential({ ...f.auth.credential, status: "suspended" }, "alice");
     f.clock.now++;
     const replay = await jsonRequest(f.server, "/auth/complete", { ...p.body, assertion: { bad: true } });
     assert.equal(replay.status, 200);
     assert.equal(await replay.text(), text);
+    assert.equal(counterComparisons, 1);
     await expectError(
       await jsonRequest(f.server, "/auth/complete", { ...p.body, clientFinished: encode(new Uint8Array(32)) }),
       401,
@@ -69,31 +111,129 @@ test(
   }
 );
 
-test(
-  "two concurrent valid completions commit one session and return identical cached bytes",
-  async () => {
-    const f = await fixture();
-    const p = await prepare(f);
-    let successfulCommits = 0;
-    const commit = f.store.commitLogin.bind(f.store);
-    f.store.commitLogin = async (value: LoginCommit) => {
-      const result = await commit(value);
-      if (result) {
-        successfulCommits++;
-      }
-      return result;
-    };
-    const [a, b] = await Promise.all([
-      jsonRequest(f.server, "/auth/complete", p.body),
-      jsonRequest(f.server, "/auth/complete", p.body)
-    ]);
-    assert.equal(a.status, 200);
-    assert.equal(b.status, 200);
-    assert.equal(await a.text(), await b.text());
-    assert.equal(successfulCommits, 1);
-    assert.ok(await f.store.getSession(p.sessionId.toUint8Array()));
+for (const backupEligible of [false, true]) {
+  test(
+    `concurrent completions return identical cached bytes for ${backupEligible ? "BE=true" : "0/0 counters"}`,
+    async () => {
+      const f = await fixture({}, { rpId: "example.com", origin: "https://example.com", userId: "u1", backupEligible });
+      const p = await prepare(f, { signCount: backupEligible ? 1 : 0 });
+      const counts = synchronizeCredentialLookups(f);
+      f.credentials.compareAndSetSignCount = async () => {
+        throw new Error("BE=true and 0/0 counters do not require CAS");
+      };
+      let successfulCommits = 0;
+      const commit = f.store.commitLogin.bind(f.store);
+      f.store.commitLogin = async (value: LoginCommit) => {
+        const result = await commit(value);
+        if (result) {
+          successfulCommits++;
+        }
+        return result;
+      };
+      const [a, b] = await Promise.all([
+        jsonRequest(f.server, "/auth/complete", p.body),
+        jsonRequest(f.server, "/auth/complete", p.body)
+      ]);
+      assert.equal(a.status, 200);
+      assert.equal(b.status, 200);
+      assert.equal(await a.text(), await b.text());
+      assert.equal(successfulCommits, 1);
+      assert.deepEqual(counts, [0, 0]);
+      assert.ok(await f.store.getSession(p.sessionId.toUint8Array()));
+    }
+  );
+}
+
+test("cloned BE=false credentials with the same next counter cannot complete separate exchanges", async () => {
+  const f = await fixture();
+  const pending = await Promise.all([prepare(f, { signCount: 1 }), prepare(f, { signCount: 1 })]);
+  const counts = synchronizeCredentialLookups(f);
+  const replies = await Promise.all(pending.map(p => jsonRequest(f.server, "/auth/complete", p.body)));
+  assert.deepEqual(counts, [0, 0]);
+  assert.deepEqual(replies.map(reply => reply.status).sort(), [200, 401]);
+  for (let i = 0; i < replies.length; i++) {
+    const reply = replies[i]!;
+    const p = pending[i]!;
+    const ex = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+    const session = await f.store.getSession(p.sessionId.toUint8Array());
+    if (reply.status === 401) {
+      await expectError(reply, 401, "auth_failed");
+      assert.equal(ex?.state, "PENDING");
+      assert.ok(ex?.serverPrivateKey);
+      assert.equal(session, null);
+    } else {
+      assert.equal(ex?.state, "COMPLETED");
+      assert.equal(ex?.signCountUpdate, undefined);
+      assert.equal(session?.status, "ACTIVE");
+    }
   }
-);
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 1);
+});
+
+test("a failed counter CAS leaves the exchange PENDING without a session", async () => {
+  const f = await fixture();
+  const p = await prepare(f, { signCount: 4 });
+  let comparisons = 0;
+  f.credentials.compareAndSetSignCount = async (id, expected, next) => {
+    comparisons++;
+    assert.deepEqual(id, f.auth.credential.credentialId);
+    assert.equal(expected, 0);
+    assert.equal(next, 4);
+    return false;
+  };
+  f.store.commitLogin = async () => {
+    throw new Error("must not commit after failed CAS");
+  };
+  await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+  assert.equal(comparisons, 1);
+  const ex = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+  assert.equal(ex?.state, "PENDING");
+  assert.ok(ex?.serverPrivateKey);
+  assert.equal(await f.store.getSession(p.sessionId.toUint8Array()), null);
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 0);
+});
+
+test("a rejected login commit safely leaves the counter advanced after successful CAS", async () => {
+  const f = await fixture();
+  const p = await prepare(f, { signCount: 4 });
+  f.store.commitLogin = async value => {
+    assert.equal(value.signCountUpdate, undefined);
+    assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 4);
+    return false;
+  };
+  await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+  assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "PENDING");
+  assert.equal(await f.store.getSession(p.sessionId.toUint8Array()), null);
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 4);
+});
+
+test("concurrent BE=true anomalies in separate exchanges both commit and notify once per exchange", async () => {
+  const events: unknown[] = [];
+  const f = await fixture(
+    {
+      onCounterAnomaly: event => {
+        events.push(event);
+      }
+    },
+    { rpId: "example.com", origin: "https://example.com", userId: "u1", signCount: 2, backupEligible: true }
+  );
+  const pending = await Promise.all([prepare(f, { signCount: 1 }), prepare(f, { signCount: 1 })]);
+  const counts = synchronizeCredentialLookups(f);
+  f.credentials.compareAndSetSignCount = async () => {
+    throw new Error("BE=true does not require CAS");
+  };
+  const replies = await Promise.all(pending.map(p => jsonRequest(f.server, "/auth/complete", p.body)));
+  assert.deepEqual(counts, [2, 2]);
+  assert.equal(events.length, 2);
+  for (let i = 0; i < replies.length; i++) {
+    assert.equal(replies[i]!.status, 200);
+    const p = pending[i]!;
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "ACTIVE");
+    assert.equal((await jsonRequest(f.server, "/auth/complete", p.body)).status, 200);
+  }
+  assert.equal(events.length, 2);
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 2);
+});
 
 for (const offset of [-1, 0]) {
   test(

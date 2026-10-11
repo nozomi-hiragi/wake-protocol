@@ -88,6 +88,16 @@ for (const [name, options] of invalid) {
   );
 }
 
+for (const compareAndSetSignCount of [undefined, 1]) {
+  test(`options rejects a missing or nonfunction credential counter CAS ${String(compareAndSetSignCount)}`, () => {
+    const credentials = Object.assign(Object.create(base.credentials), { compareAndSetSignCount });
+    assert.throws(
+      () => createWakeServer({ ...base, credentials }),
+      (error: unknown) => error instanceof WakeError && error.code === "invalid_option"
+    );
+  });
+}
+
 test(
   "options accepts defaults and exact boundaries",
   () => {

@@ -98,17 +98,25 @@ for (const status of ["pending", "suspended", "deleted"] as const) {
   );
 }
 
-for (const change of [{ algorithm: -257 }, { publicKey: new Uint8Array(1) }]) {
-  test(
-    `WebAuthn rejects unsupported algorithm or invalid SPKI ${Object.keys(change)}`,
-    async () => {
-      const f = await fixture();
-      const p = await prepare(f);
-      f.credentials.setCredential({ ...f.auth.credential, ...change }, "alice");
-      await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
-    }
-  );
-}
+test("WebAuthn rejects unsupported credential algorithms", async () => {
+  const f = await fixture();
+  const p = await prepare(f);
+  f.credentials.setCredential({ ...f.auth.credential, algorithm: -257 }, "alice");
+  await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+  assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.state, "PENDING");
+});
+
+test("corrupt stored SPKI returns retry without consuming the exchange or advancing the counter", async () => {
+  const f = await fixture();
+  const p = await prepare(f);
+  f.credentials.setCredential({ ...f.auth.credential, publicKey: new Uint8Array(1) }, "alice");
+  await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 503, "retry");
+  const ex = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+  assert.equal(ex?.state, "PENDING");
+  assert.ok(ex?.serverPrivateKey);
+  assert.equal(await f.store.getSession(p.sessionId.toUint8Array()), null);
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))?.signCount, 0);
+});
 
 for (const tamper of [
   { userHandle: "omit" },

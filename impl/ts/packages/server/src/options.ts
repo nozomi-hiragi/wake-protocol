@@ -89,7 +89,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
   if (!(options.secret instanceof Uint8Array) || options.secret.length < 32) {
     invalid();
   }
-  if (!hasMethods(options.credentials, ["getCredential", "findUserByUsername", "updateSignCount"])) {
+  if (!hasMethods(options.credentials, ["getCredential", "findUserByUsername", "compareAndSetSignCount", "updateSignCount"])) {
     invalid();
   }
   if (options.now !== undefined && typeof options.now !== "function") {

@@ -1,5 +1,6 @@
 // Spec §7.5–§7.8: ordered login verification and atomic, idempotent commit.
 import { base64urlnopad } from "@scure/base";
+import { constantTimeEqual } from "@wake-protocol/crypto";
 import {
   aesKey,
   asClientFinishedMac,
@@ -96,8 +97,8 @@ async function replay(
   if (ex?.state !== "COMPLETED" || !ex.th || !ex.clientFinished || ex.response === undefined) {
     return null;
   }
-  // §7.6 compares public transcript and Finished values, without re-verifying WebAuthn.
-  if (!ex.th.equals(th) || !ex.clientFinished.equals(mac)) {
+  // §7.6 skips WebAuthn re-verification; §5.7 requires constant-time Finished comparison.
+  if (!ex.th.equals(th) || !constantTimeEqual(ex.clientFinished.toUint8Array(), mac.toUint8Array())) {
     throw new WakeError("auth_failed");
   }
   const retained = await options.store.getExchange(ex.exchangeId.toUint8Array(), options.now());
@@ -195,13 +196,22 @@ async function commitLogin(
   verified: VerifiedAssertion,
   options: ServerOptions,
 ): Promise<Response> {
-  const update: SignCountUpdate = {
-    credentialId: verified.credential.credentialId.slice(),
-    userId: verified.credential.userId,
-    signCount: verified.signCount,
-    storedSignCount: verified.credential.signCount,
-    anomaly: verified.counterAnomaly,
-  };
+  const credential = verified.credential;
+  let update: SignCountUpdate | undefined;
+  if (!credential.backupEligible && verified.signCount > credential.signCount) {
+    if (!await options.credentials.compareAndSetSignCount(credential.credentialId, credential.signCount, verified.signCount)) {
+      throw new WakeError("auth_failed");
+    }
+    // A later commit failure only leaves the counter advanced, which is safe; no replay update is needed.
+  } else {
+    update = {
+      credentialId: credential.credentialId.slice(),
+      userId: credential.userId,
+      signCount: verified.signCount,
+      storedSignCount: credential.signCount,
+      anomaly: verified.counterAnomaly,
+    };
+  }
   const committed = await options.store.commitLogin({
     exchangeId: body.exchangeId.toUint8Array(),
     now: options.now(),
@@ -209,7 +219,7 @@ async function commitLogin(
     clientFinished: body.clientMac,
     response: result.response,
     session,
-    signCountUpdate: update,
+    ...(update ? { signCountUpdate: update } : {}),
   });
   if (!committed) {
     const ex = await options.store.getExchange(body.exchangeId.toUint8Array(), options.now());
@@ -219,7 +229,9 @@ async function commitLogin(
     }
     throw new WakeError("auth_failed");
   }
-  await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
+  if (update) {
+    await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
+  }
   return jsonTextResponse(result.response);
 }
 

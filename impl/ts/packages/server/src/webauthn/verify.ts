@@ -89,15 +89,7 @@ async function checkSignature(
     }
     throw e;
   }
-  let key: CryptoKey;
-  try {
-    key = await importP256SpkiPublicKey(credential.publicKey);
-  } catch (e) {
-    if (e instanceof DOMException && e.name === "DataError") {
-      fail();
-    }
-    throw e;
-  }
+  const key = await importP256SpkiPublicKey(credential.publicKey);
   const signed = Bytes.concat(new Bytes(authData), new Bytes(await sha256(clientData)));
   if (!await p256EcdsaVerify(key, rawSignature, signed.toUint8Array())) {
     fail();

@@ -96,6 +96,15 @@ export class MemoryCredentialStore implements CredentialStore {
     };
   }
 
+  async compareAndSetSignCount(credentialId: Uint8Array, expected: number, next: number): Promise<boolean> {
+    const c = this.#credentials.get(id(credentialId));
+    if (!c || c.signCount !== expected) {
+      return false;
+    }
+    c.signCount = next;
+    return true;
+  }
+
   async updateSignCount(credentialId: Uint8Array, signCount: number): Promise<void> {
     const c = this.#credentials.get(id(credentialId));
     if (!c) {
@@ -222,7 +231,9 @@ export class MemoryWakeStore implements WakeStore {
     ex.th = c.th;
     ex.clientFinished = c.clientFinished;
     ex.response = c.response;
-    ex.signCountUpdate = cloneUpdate(c.signCountUpdate);
+    if (c.signCountUpdate) {
+      ex.signCountUpdate = cloneUpdate(c.signCountUpdate);
+    }
     this.#sessions.set(id(c.session.sessionId.toUint8Array()), cloneSession(c.session));
     return true;
   }

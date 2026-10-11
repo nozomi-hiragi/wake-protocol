@@ -194,3 +194,20 @@ test("MemoryCredentialStore rejects re-binding a credentialId or username to ano
   store.setCredential(b.credential, "bob");
   assert.equal((await store.findUserByUsername("bob"))?.userId, "u2");
 });
+
+test("credential counter CAS admits exactly one concurrent update from the same stored value", async () => {
+  const auth = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1", signCount: 3 });
+  const store = new MemoryCredentialStore([auth.credential]);
+  const id = auth.credential.credentialId;
+  const results = await Promise.all([
+    store.compareAndSetSignCount(id, 3, 4),
+    store.compareAndSetSignCount(id, 3, 4)
+  ]);
+  assert.deepEqual(results, [true, false]);
+  assert.equal((await store.getCredential(id))?.signCount, 4);
+  assert.equal(await store.compareAndSetSignCount(id, 3, 5), false);
+  assert.equal((await store.getCredential(id))?.signCount, 4);
+  assert.equal(await store.compareAndSetSignCount(id, 4, 5), true);
+  assert.equal((await store.getCredential(id))?.signCount, 5);
+  assert.equal(await store.compareAndSetSignCount(new Uint8Array([9]), 0, 1), false);
+});
