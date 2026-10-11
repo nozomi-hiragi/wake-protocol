@@ -33,7 +33,8 @@ export function checkDependencies(root: string): { offenders: string[]; count: n
     const pkg = readPackage(dir);
     const allowed = new Set(allowedEdges[pkg.name] ?? []);
     const dependencies = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies });
-    const declared = new Set([...rootDev, ...dependencies]);
+    // src/ must declare its imports as runtime dependencies (not devDependencies).
+    const runtime = new Set(Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies }));
     count++;
     if (!(pkg.name in allowedEdges)) offenders.push(`${relative(root, dir)}: unknown package ${pkg.name}`);
     for (const name of dependencies) {
@@ -41,19 +42,25 @@ export function checkDependencies(root: string): { offenders: string[]; count: n
         offenders.push(`${relative(root, join(dir, "package.json"))}: ${name} (forbidden dependency)`);
       }
     }
-    for (const file of ["src", "test", "scripts"].flatMap((name) => files(join(dir, name)))) {
-      const imports = ts.preProcessFile(readFileSync(file, "utf8"), true, true).importedFiles;
-      for (const { fileName: specifier } of imports) {
-        let reason = "";
-        if (specifier.startsWith(".")) {
-          const target = relative(dir, resolve(dirname(file), specifier));
-          if (target === ".." || target.startsWith("../") || isAbsolute(target)) reason = "relative import leaves package";
-        } else if (!isBuiltin(specifier)) {
-          const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0]!;
-          if (!allowed.has(name) && !(rootDev.includes(name) && !name.startsWith("@wake-protocol/"))) reason = "forbidden dependency";
-          else if (!declared.has(name)) reason = "undeclared dependency";
+    for (const area of ["src", "test", "scripts"]) {
+      // Root devDependencies (typescript, @types/node) are allowed only in test and script code.
+      const devArea = area !== "src";
+      const declared = devArea ? new Set([...rootDev, ...dependencies]) : runtime;
+      for (const file of files(join(dir, area))) {
+        const imports = ts.preProcessFile(readFileSync(file, "utf8"), true, true).importedFiles;
+        for (const { fileName: specifier } of imports) {
+          let reason = "";
+          if (specifier.startsWith(".")) {
+            const target = relative(dir, resolve(dirname(file), specifier));
+            if (target === ".." || target.startsWith("../") || isAbsolute(target)) reason = "relative import leaves package";
+          } else if (!isBuiltin(specifier)) {
+            const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0]!;
+            const rootDevOk = devArea && rootDev.includes(name) && !name.startsWith("@wake-protocol/");
+            if (!allowed.has(name) && !rootDevOk) reason = "forbidden dependency";
+            else if (!declared.has(name)) reason = "undeclared dependency";
+          }
+          if (reason) offenders.push(`${relative(root, file)}: ${specifier} (${reason})`);
         }
-        if (reason) offenders.push(`${relative(root, file)}: ${specifier} (${reason})`);
       }
     }
   }

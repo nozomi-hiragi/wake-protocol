@@ -15,6 +15,7 @@ const cases = [
   ["undeclared", "src/index.ts", "undeclared dependency"],
   ["vectors-crypto", "package.json", "forbidden dependency"],
   ["root-workspace-bypass", "src/index.ts", "forbidden dependency"],
+  ["root-dev-in-src", "src/index.ts", "forbidden dependency"],
 ] as const;
 
 for (const [name, file, reason] of cases) {
