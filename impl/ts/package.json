@@ -1,6 +1,7 @@
 {
   "name": "wake-protocol-ts",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=22.18"
@@ -9,9 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc -p packages/core",
-    "test": "npm test -w @wake-protocol/core",
-    "vectors": "npm run vectors -w @wake-protocol/core"
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "node scripts/check-deps.ts && node --test scripts/check-deps.test.ts && npm test --workspaces",
+    "vectors": "npm run vectors -w @wake-protocol/vectors"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

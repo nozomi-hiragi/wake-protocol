@@ -1,27 +1,23 @@
-// Test-only helpers with fixed randomness (spec §16 vectors). Exposed as the
-// "@wake-protocol/core/testing" subpath, never from the main entry point.
-import { type Bytes, b64u, concat, u32 } from "./encoding.ts";
-import { aesGcmEncrypt } from "./crypto.ts";
-import { checkPlaintextLength, encodeHeader, type MsgHeader, type MsgOptions } from "./msg.ts";
-import type { EcPublicKey } from "./types.ts";
+// Test-only encoding and helpers with fixed randomness (spec §16 vectors). Exposed as the
+// testing package subpath, never from the main entry point.
+import { Bytes } from "@wake-protocol/bytes";
+import { importP256PrivateKey } from "@wake-protocol/crypto";
+import { sealWithHeaderAnyKey } from "./msg/aead.ts";
+import { type MsgHeader, type MsgOptions } from "./msg/header.ts";
+import type { C2sCryptoKey, S2cCryptoKey } from "./spec/crypto.ts";
+import type { EcPublicKey } from "./spec/types.ts";
 
-const subtle = globalThis.crypto.subtle;
-
-/** Seal with a caller-chosen IV. Never use for real traffic (IV reuse breaks AES-GCM). */
-export async function sealWithIv(key: CryptoKey, h: MsgHeader, plaintext: Bytes, opts?: MsgOptions): Promise<Bytes> {
-  checkPlaintextLength(plaintext.length, opts);
-  const H = encodeHeader(h);
-  const C = await aesGcmEncrypt(key, h.iv, plaintext, H);
-  return concat(u32(H.length), H, C);
+/**
+ * Seal with a caller-chosen IV. Never use for real traffic (IV reuse breaks AES-GCM).
+ * Throws RangeError for out-of-range epoch/issuedAt or IV length, TypeError for an incompatible key.
+ */
+export async function sealWithIv(key: C2sCryptoKey | S2cCryptoKey, h: MsgHeader, plaintext: Bytes, opts?: MsgOptions): Promise<Bytes> {
+  return sealWithHeaderAnyKey(key, h, plaintext, opts);
 }
 
 /** Imports a P-256 private scalar (32 bytes) with its public point. */
 export async function importEcdhPrivateKey(d: Bytes, publicKey: EcPublicKey): Promise<CryptoKey> {
-  return subtle.importKey(
-    "jwk",
-    { kty: "EC", crv: "P-256", d: b64u(d), x: b64u(publicKey.slice(1, 33)), y: b64u(publicKey.slice(33)), ext: true },
-    { name: "ECDH", namedCurve: "P-256" },
-    false,
-    ["deriveBits"],
-  );
+  return importP256PrivateKey(d.toUint8Array(), publicKey.toUint8Array());
 }
+
+export { encodeChallengeInput } from "./kx/challenge.ts";

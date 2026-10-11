@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { createCipheriv, createECDH, createHash, createHmac, hkdfSync } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_VECTOR_DIR } from "../scripts/generate-vectors.ts";
+import { fileURLToPath } from "node:url";
+
+const DEFAULT_VECTOR_DIR = fileURLToPath(new URL("../../../../../spec/test-vectors/", import.meta.url));
 
 type Vec = { name: string; input: Record<string, string | number>; expected?: Record<string, string | number>; expectedError?: string };
 const load = async (suite: string): Promise<Map<string, Vec>> => {
@@ -18,8 +20,8 @@ const u32 = (n: number): Buffer => {
   b.writeUInt32BE(n);
   return b;
 };
-/** LP over Buffers, written independently of src/encoding.ts. */
-const lpNode = (...fields: Buffer[]): Buffer => Buffer.concat(fields.flatMap((f) => [u32(f.length), f]));
+/** LP over Buffers, written independently of src/shared/encoding.ts. */
+const encodeU32LengthPrefixedNode = (...fields: Buffer[]): Buffer => Buffer.concat(fields.flatMap((f) => [u32(f.length), f]));
 const ascii = (s: string): Buffer => Buffer.from(s, "ascii");
 
 describe("independent cross-checks (node:crypto)", () => {
@@ -53,7 +55,7 @@ describe("independent cross-checks (node:crypto)", () => {
     const i = t.input;
     const th = createHash("sha256")
       .update(
-        lpNode(
+        encodeU32LengthPrefixedNode(
           ascii("WAKE/1 kx-transcript"),
           Buffer.from([Number(i.mode)]),
           buf(i.exchangeId!),
@@ -70,7 +72,7 @@ describe("independent cross-checks (node:crypto)", () => {
 
     const c = (await load("challenge")).get("ta+kr")!;
     const ch = createHash("sha256")
-      .update(lpNode(ascii("WAKE/1 webauthn-challenge"), buf(c.input.th!), buf(c.input.ta!)))
+      .update(encodeU32LengthPrefixedNode(ascii("WAKE/1 webauthn-challenge"), buf(c.input.th!), buf(c.input.ta!)))
       .digest("hex");
     assert.equal(ch, c.expected!.challenge);
   });
@@ -79,7 +81,7 @@ describe("independent cross-checks (node:crypto)", () => {
     const vs = await load("finished");
     const cf = vs.get("client-finished")!;
     const cfMac = createHmac("sha256", buf(cf.input.fkC!))
-      .update(lpNode(ascii("WAKE/1 client finished"), buf(cf.input.th!)))
+      .update(encodeU32LengthPrefixedNode(ascii("WAKE/1 client finished"), buf(cf.input.th!)))
       .digest("hex");
     assert.equal(cfMac, cf.expected!.clientFinished);
 
@@ -87,7 +89,7 @@ describe("independent cross-checks (node:crypto)", () => {
     const i = sf.input;
     const sfMac = createHmac("sha256", buf(i.fkS!))
       .update(
-        lpNode(
+        encodeU32LengthPrefixedNode(
           ascii("WAKE/1 server finished"),
           buf(i.th!),
           buf(i.clientFinished!),
