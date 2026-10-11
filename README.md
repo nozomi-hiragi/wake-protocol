@@ -88,6 +88,10 @@ WAKEは次のものを防ぎません。詳しくは仕様書の「責任範囲�
 
 仕様への質問、矛盾や攻撃の指摘は [Issues](../../issues) で受け付けています。特に、暗号プロトコルとしての問題点の指摘を歓迎します。
 
+## 開発
+
+ブランチ・コミット・PR の運用は [CONTRIBUTING.md](CONTRIBUTING.md)、仮実装の設計方針は [impl/ts/DESIGN.md](impl/ts/DESIGN.md)、コーディングエージェント向けの指示は [AGENTS.md](AGENTS.md) にまとめています。
+
 ## ライセンス
 
 [Apache License 2.0](LICENSE)（仕様書、参照実装、テストベクターすべて）

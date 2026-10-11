@@ -2,6 +2,8 @@
 
 [WAKE Protocol 仕様書](../../spec/wake-protocol.md) が実際に動くか、曖昧な所がないかを確かめるための仮実装です。**本番では使わないでください。**
 
+コードの分け方・名前・エラーの扱いなどの方針は [DESIGN.md](DESIGN.md)、実装で見つかった仕様の曖昧点は [SPEC-NOTES.md](SPEC-NOTES.md) にまとめています。
+
 ## 構成
 
 | パッケージ | 内容 |
@@ -56,7 +58,7 @@
 | `vectors/test/vectors.test.ts` | §16 保存済みベクターと実装の照合 |
 | `vectors/test/generate.test.ts` | §16 生成結果の安定性の検査 |
 
-`npm test` は最初に `scripts/check-deps.ts` でパッケージ間の依存方向を明示した一覧と宣言・import を照合し、検査器の回帰テストの後、すべてのパッケージのテストを実行します。汎用パッケージ同士は依存しません。import の抽出には TypeScript のコンパイラ API を使い、動的 import やコメントを挟んだ import も検査します。TypeScript 設定は `tsconfig.base.json` に共通化し、各パッケージから `extends` します。
+`npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは、ルートの開発用依存と Node の組み込みモジュールだけです。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
 
 ## 使い方
 
@@ -64,13 +66,13 @@ Node.js 22.18 以降（TypeScript を変換なしで実行します）。
 
 ```sh
 cd impl/ts
-npm install
+npm ci
 npm run typecheck
-npm test          # テストベクターの照合、node:crypto との突き合わせ、往復テスト
+npm test          # 依存の検査、テストベクターの照合、node:crypto との突き合わせ、往復テスト
 npm run vectors   # spec/test-vectors/*.json を再生成
 ```
 
-WAKE API は core から、汎用ヘルパーは各パッケージから直接インポートします。core は、本文・平文用の `Bytes` と、導出鍵を取り込む `aesKey` / `hmacKey` を公開します。
+WAKE API は core から、汎用ヘルパーは各パッケージから直接インポートします。core が汎用側から公開するのは、本文・平文用の `Bytes` と、導出鍵を取り込む `aesKey` / `hmacKey` だけです。
 
 ```ts
 import { Bytes } from "@wake-protocol/core";
@@ -82,19 +84,28 @@ const plaintext = new Bytes(utf8ToBytes('{"ok":true}'));
 const digestHex = hex.encode(await sha256(plaintext.toUint8Array()));
 ```
 
-16進・Base64url の変換は `@scure/base` の `hex` / `base64urlnopad` を直接使います。
+- 16進・Base64url の変換は、`@scure/base` の `hex` / `base64urlnopad` を直接使います。
+- codec / crypto は `Uint8Array` を受け取り、返します。`Bytes` を渡す場合は `.toUint8Array()` で変換します。
+- 固定幅整数は `Byte` / `Byte2` / `Byte4` / `Byte8`、数値の読み出しは `.number`、バイト値の比較・連結は `.equals()` / `Bytes.concat()` を使います。
+- LP の復号は codec の `decodeU32LengthPrefixed`、`number` / `bigint` の変換は bytes の `numberToBigInt` / `bigIntToNumber` を使います。
 
-codec / crypto は `Uint8Array` を受け取り、返します。`Bytes` を渡す場合は `.toUint8Array()` で変換します。固定幅整数は `Byte` / `Byte2` / `Byte4` / `Byte8`、数値の読み出しは `.number`、バイト値の比較・連結は `.equals()` / `Bytes.concat()` を使います。LP の復号は codec の `decodeU32LengthPrefixed`、`number` / `bigint` の変換は bytes の `numberToBigInt` / `bigIntToNumber` を使います。
+## API の要点
 
-`bytesToAscii` が大きな ASCII 入力でスタックあふれを起こす問題を修正しました。ASCII の厳密な検査は維持しています。
+### `Bytes`
 
-`Bytes` は `Uint8Array` の型別名から実行時のクラスに変わりました。`seal` の平文や ET の本文には `new Bytes(u8)` を渡し、`seal` の Wire や `open` の平文などの戻り値を配列として使う場合は `.toUint8Array()` で取り出します。導出鍵は `aesKey(keys.kC2s)` / `hmacKey(keys.fkC)` のように役割付きの値を渡し、外部の鍵配列は `asC2sKey(u8)` などで長さと役割のブランドを付けます。
+- `Bytes` は実行時のクラスです（`Uint8Array` の型別名ではありません）。`seal` の平文や ET の本文には `new Bytes(u8)` を渡し、`seal` の Wire や `open` の平文などの戻り値を配列として使う場合は `.toUint8Array()` で取り出します。
+- 入力と取り出した配列はコピーします。配列要素は `Uint8Array` と同じ規則で変換するため、`new Bytes([256, -1, 1.5])` は `[0, 255, 1]` になります。
+- コピーによって秘密の値が複数箇所に残りうるため、`Bytes` は秘密データの消去を保証する仕組みではありません。
+- `fixedLength<B extends string>(name, len)` はブランド識別子を受け取り、`Brand<B>` を返す検査関数を作ります（例: `fixedLength<"Token">("token", 16)`）。`Byte4` などのクラス型を型引数に指定することはできません。
 
-`Bytes` は入力と取り出した配列をコピーします。配列要素は `Uint8Array` と同じ規則で変換するため、`new Bytes([256, -1, 1.5])` は `[0, 255, 1]` になります。コピーによって秘密の値が複数箇所に残りうるため、`Bytes` は秘密データの消去を保証する仕組みではありません。
+### 鍵
 
-`fixedLength<B extends string>(name, len)` はブランド識別子を受け取り、`Brand<B>` を返す検査関数を作ります。たとえば `fixedLength<"Token">("token", 16)` と書きます。`Byte4` などのクラス型を型引数に指定することはできません。
+core の鍵インポートは、鍵の役割を型で区別します。ブランドは型検査用で、実行時には消えます。
 
-core の鍵インポートは用途を型で区別します。`aesKey` は `C2sKey` / `S2cKey` だけを受け取り、それぞれ `C2sCryptoKey` / `S2cCryptoKey` を返します。`hmacKey` は `FinishedKeyC` / `FinishedKeyS` だけを受け取り、それぞれ `FinishedCryptoKeyC` / `FinishedCryptoKeyS` を返します。4つの読み込み済み鍵型も core から公開します。これらのブランドは型検査用で、実行時には消えます。
+| 関数 | 受け取るもの | 返すもの |
+|---|---|---|
+| `aesKey` | `C2sKey` / `S2cKey` | `C2sCryptoKey` / `S2cCryptoKey` |
+| `hmacKey` | `FinishedKeyC` / `FinishedKeyS` | `FinishedCryptoKeyC` / `FinishedCryptoKeyS` |
 
 ```ts
 import { aesKey, hmacKey } from "@wake-protocol/core";
@@ -104,17 +115,36 @@ const messageKey = await aesKey(keys.kC2s);  // C2sCryptoKey
 const finishedKey = await hmacKey(keys.fkC); // FinishedCryptoKeyC
 ```
 
-`seal` / `open` / `openParsed` と testing の `sealWithIv` は `C2sCryptoKey | S2cCryptoKey` を受け取ります。`clientFinished` / `verifyClientFinished` は `FinishedKeyC | FinishedCryptoKeyC`、`serverFinished` / `verifyServerFinished` は `FinishedKeyS | FinishedCryptoKeyS` を受け取ります。`open` の `expectDir` は `MsgHeader["dir"]`（`DIR_C2S | DIR_S2C`）に限定します。
+- 外部から受け取った鍵の配列は、`asC2sKey(u8)` などで長さと役割のブランドを付けてから渡します。
+- `seal` / `open` / `openParsed` と testing の `sealWithIv` は `C2sCryptoKey | S2cCryptoKey` を受け取ります。`open` の `expectDir` は `MsgHeader["dir"]`（`DIR_C2S | DIR_S2C`）です。
+- `clientFinished` / `verifyClientFinished` は `FinishedKeyC | FinishedCryptoKeyC`、`serverFinished` / `verifyServerFinished` は `FinishedKeyS | FinishedCryptoKeyS` を受け取ります。
+- 汎用 crypto の `aesGcmEncrypt` / `aesGcmDecrypt` は、AES-GCM・256ビット・必要な用途（encrypt / decrypt）を持つ鍵かを検査し、不一致は `TypeError` にします。IV が12バイトでなければ `RangeError` です。復号の `null` は認証失敗だけを表し、それ以外の例外は投げます。core の `seal` / `open` / `openParsed` でも、合わない鍵は `TypeError`、認証失敗は `WakeError("reauth")` になります。Finished の関数に合わない鍵を渡した場合は、Web Crypto の `DOMException`（`InvalidAccessError`）がそのまま伝わります。
 
-汎用 crypto の `aesGcmEncrypt` / `aesGcmDecrypt` は AES-GCM、256ビット、必要な用途（encrypt / decrypt）を持つ鍵を検査し、不一致は `TypeError` にします。IV が12バイトでなければ `RangeError` です。復号の `null` は認証失敗だけを表し、それ以外の例外は伝播します。core でもローカルの鍵の誤りは `TypeError`、認証失敗は `WakeError("reauth")` になります。
+### エラー
 
-`encodeChallengeInput` は `@wake-protocol/core/testing` に移しました。公開 API では儀式ごとの `kxChallenge` / `krChallenge` / `taChallenge` / `taKrChallenge` を使います。
+方針の全体は [DESIGN.md](DESIGN.md#3-エラーの扱い) を参照してください。
 
-呼び出し側が渡した範囲外の数値は `RangeError` にします。`encodeRekeyTranscript` / `rekeyTranscriptHash` の `epoch` は整数の 1..2^32-1、メッセージヘッダーの `epoch` は整数の 0..2^32-1、`issuedAt` / `serverTime` / `absoluteExpiresAt` は整数の 0..2^53-1、`idleTimeoutSec` は整数の 0..2^32-1 です。一方、`parseWire` / `decodeEtRequest` / `decodeEtResponse` が受け取ったデータの形式不正は `WakeError` のコードに変換します。`checkContext`、`checkContent`、ET の意味の検査はエンコード時も意図的に `WakeError` を投げ、オプションの検査は `invalid_option` を保ちます。ベクターで数値の失敗にコードが必要な場合は、ベクター実行側で付け替えます。
+- 呼び出し側が固定幅の整数フィールドに範囲外の数値を渡すと、`RangeError` にします。
+  - `encodeRekeyTranscript` / `rekeyTranscriptHash` の `epoch`: 整数の 1..2^32-1
+  - メッセージヘッダーの `epoch`: 整数の 0..2^32-1
+  - `issuedAt` / `serverTime` / `absoluteExpiresAt`: 整数の 0..2^53-1
+  - `idleTimeoutSec`: 整数の 0..2^32-1
+- `parseWire` / `decodeEtRequest` / `decodeEtResponse` が受け取ったデータの形式不正は、`WakeError` のコードにします。
+- `checkContext`、`checkContent`、ET の意味の検査（status の範囲を含む）は、エンコード時も意図的に `WakeError` を投げます。オプションの検査は `invalid_option` です。
+- ベクターで数値の失敗にコードが必要な場合は、ベクター実行側で付け替えます。
 
-core は既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_ENCODED`（1,128,491バイト）と `ET_RESPONSE_MAX_ENCODED`（1,122,335バイト）として公開します。ヘッダーは名前が最低1バイト、値が空でもよいため、`ET_HEADERS_MAX` の8192バイトで最大8192組になります。入れ子の LP は各組に4バイトの長さを2つ付けるので、ヘッダー全体は `8192 + 8192 × 8 = 73728` バイトです。
+### ET のサイズ上限
 
-リクエストの最大長は外側の LP（6 × 4）、ラベル（13）、最長のメソッド（DELETE、6）、パス（2048）、クエリー（4096）、ヘッダー（73728）、本文（1048576）の合計です。レスポンスは外側の LP（4 × 4）、ラベル（13）、status（2）、ヘッダー（73728）、本文（1048576）の合計です。`DEFAULT_MAX_PLAINTEXT` は両者の最大値に変更し、既定の ET 上限で受け付けるデータを `seal` / `parseWire` / `open` でも受け付けます。`bodyLimit` を大きくする場合は、必要に応じて `maxPlaintext` も増やします。
+core は、既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_ENCODED`（1,128,491バイト）と `ET_RESPONSE_MAX_ENCODED`（1,122,335バイト）として公開します。
+
+- ヘッダーは名前が最低1バイト、値が空でもよいため、`ET_HEADERS_MAX` の8192バイトで最大8192組になります。入れ子の LP は各組に4バイトの長さを2つ付けるので、ヘッダー全体は `8192 + 8192 × 8 = 73728` バイトです。
+- リクエストの最大長は、外側の LP（6 × 4）、ラベル（13）、最長のメソッド（DELETE、6）、パス（2048）、クエリー（4096）、ヘッダー（73728）、本文（1048576）の合計です。
+- レスポンスの最大長は、外側の LP（4 × 4）、ラベル（13）、status（2）、ヘッダー（73728）、本文（1048576）の合計です。
+- `DEFAULT_MAX_PLAINTEXT` は両者の最大値（1,128,491バイト）なので、既定の ET 上限で受け付けるデータは `seal` / `parseWire` / `open` でも受け付けます。`bodyLimit` を大きくする場合は、必要に応じて `maxPlaintext` も増やします。
+
+### テスト専用 API
+
+`@wake-protocol/core/testing` には、乱数を固定するものや制約のない符号化を置いています（`sealWithIv`、`importEcdhPrivateKey`、`encodeChallengeInput`）。本番のコードでは使いません。WebAuthn Challenge は、公開 API の儀式ごとの `kxChallenge` / `krChallenge` / `taChallenge` / `taKrChallenge` で作ります。
 
 ## テストベクター
 
@@ -128,5 +158,3 @@ core は既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_ENC
 - [x] M1: 暗号コアとテストベクター
 - [ ] M2: KX と SM をブラウザ（パスキー）と Node サーバーで端から端まで動かす
 - [ ] M3: KR、TA、ET
-
-仮実装で見つかった仕様の曖昧点は [SPEC-NOTES.md](SPEC-NOTES.md) にまとめています。
