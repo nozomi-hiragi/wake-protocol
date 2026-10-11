@@ -91,7 +91,6 @@ test(
     assert.equal(first.status, 200);
     assert.equal((await f.store.getExchange(decode(p.info.exchangeId), f.clock.now))?.signCountUpdate, undefined);
     const text = await first.text();
-    f.credentials.setCredential({ ...f.auth.credential, status: "suspended" }, "alice");
     f.clock.now++;
     const replay = await jsonRequest(f.server, "/auth/complete", { ...p.body, assertion: { bad: true } });
     assert.equal(replay.status, 200);
@@ -110,6 +109,120 @@ test(
     );
   }
 );
+
+for (const backupEligible of [false, true]) {
+  test(`replay rechecks a suspended credential after a transient post-commit lookup failure (BE=${backupEligible})`, async () => {
+    const f = await fixture({}, { rpId: "example.com", origin: "https://example.com", userId: "u1", backupEligible });
+    const p = await prepare(f, { signCount: 1 });
+    const lookup = f.credentials.getCredential.bind(f.credentials);
+    let failLookup = false;
+    f.credentials.getCredential = async id => {
+      if (failLookup) {
+        failLookup = false;
+        throw new Error("transient credential lookup failure");
+      }
+      return lookup(id);
+    };
+    const commit = f.store.commitLogin.bind(f.store);
+    f.store.commitLogin = async value => {
+      const committed = await commit(value);
+      if (committed) {
+        failLookup = true;
+      }
+      return committed;
+    };
+    let counterUpdates = 0;
+    f.credentials.updateSignCount = async () => {
+      counterUpdates++;
+      throw new Error("revocation must precede deferred counter updates");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 503, "retry");
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "ACTIVE");
+    const exchange = await f.store.getExchange(decode(p.info.exchangeId), f.clock.now);
+    assert.equal(exchange?.state, "COMPLETED");
+    assert.equal(Boolean(exchange?.signCountUpdate), backupEligible);
+    const credential = await lookup(f.auth.credential.credentialId);
+    assert.ok(credential);
+    assert.equal(credential.signCount, backupEligible ? 0 : 1);
+    f.credentials.setCredential({ ...credential, status: "suspended" }, "alice");
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "REVOKED");
+    assert.equal(counterUpdates, 0);
+  });
+}
+
+for (const status of ["pending", "suspended", "deleted", null] as const) {
+  test(`completed replay rejects a ${status ?? "missing"} credential and revokes its session`, async () => {
+    const f = await fixture();
+    const p = await login(f);
+    if (status === null) {
+      f.credentials.getCredential = async () => null;
+    } else {
+      f.credentials.setCredential({ ...f.auth.credential, status }, "alice");
+    }
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "REVOKED");
+  });
+}
+
+for (const status of ["REVOKED", "EXPIRED", null] as const) {
+  test(`completed replay rejects a ${status ?? "missing"} session before looking up its credential`, async () => {
+    const f = await fixture();
+    const p = await login(f);
+    if (status === "REVOKED") {
+      await f.store.revokeSession(p.sessionId.toUint8Array());
+      assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "REVOKED");
+    } else if (status === "EXPIRED") {
+      // Expire the session while preserving the completed exchange's retention window.
+      await f.store.expireSession(p.sessionId.toUint8Array(), f.clock.now + 7 * 86400000);
+      assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "EXPIRED");
+    } else {
+      f.store.getSession = async () => null;
+    }
+    let credentialLookups = 0;
+    f.credentials.getCredential = async () => {
+      credentialLookups++;
+      throw new Error("terminal sessions must be rejected before credential lookup");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+    assert.equal(credentialLookups, 0);
+  });
+}
+
+for (const backupEligible of [false, true]) {
+  test(`replay retries a failed post-commit credential revocation (BE=${backupEligible})`, async () => {
+    const f = await fixture({}, { rpId: "example.com", origin: "https://example.com", userId: "u1", backupEligible });
+    const p = await prepare(f, { signCount: 1 });
+    const commit = f.store.commitLogin.bind(f.store);
+    f.store.commitLogin = async value => {
+      const committed = await commit(value);
+      if (committed) {
+        f.credentials.setCredential({ ...f.auth.credential, status: "suspended" }, "alice");
+      }
+      return committed;
+    };
+    const revoke = f.store.revokeSessionsByCredential.bind(f.store);
+    let revocations = 0;
+    f.store.revokeSessionsByCredential = async id => {
+      revocations++;
+      if (revocations === 1) {
+        throw new Error("transient revocation failure");
+      }
+      return revoke(id);
+    };
+    let counterUpdates = 0;
+    f.credentials.updateSignCount = async () => {
+      counterUpdates++;
+      throw new Error("revocation must precede deferred counter updates");
+    };
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 503, "retry");
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "ACTIVE");
+    await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+    assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "REVOKED");
+    assert.equal(revocations, 2);
+    assert.equal(counterUpdates, 0);
+  });
+}
 
 for (const backupEligible of [false, true]) {
   for (const status of ["suspended", "deleted"] as const) {

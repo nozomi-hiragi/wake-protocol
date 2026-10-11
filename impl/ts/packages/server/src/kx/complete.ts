@@ -21,6 +21,7 @@ import type {
   EcPublicKey,
   ExchangeId,
   LoginTranscriptHash,
+  SessionId,
 } from "@wake-protocol/core";
 import { checkContentType, isObject, jsonTextResponse, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
@@ -88,6 +89,20 @@ async function applySignCountUpdate(update: SignCountUpdate, exchangeId: Uint8Ar
   }
 }
 
+async function checkLoginSession(sessionId: SessionId, options: ServerOptions): Promise<void> {
+  const session = await options.store.getSession(sessionId.toUint8Array());
+  if (!session || session.status !== "ACTIVE") {
+    throw new WakeError("auth_failed");
+  }
+  // With app status changes first and revocation second, either login interleaving revokes the session.
+  // Check before counter updates so an update failure cannot skip revocation.
+  const credential = await options.credentials.getCredential(session.loginCredentialId);
+  if (!credential || credential.status !== "active") {
+    await options.store.revokeSessionsByCredential(session.loginCredentialId);
+    throw new WakeError("auth_failed");
+  }
+}
+
 async function replay(
   ex: ExchangeRecord | null,
   th: LoginTranscriptHash,
@@ -105,6 +120,7 @@ async function replay(
   if (!retained || retained.state !== "COMPLETED") {
     return null;
   }
+  await checkLoginSession(retained.sessionId, options);
   if (retained.signCountUpdate) {
     await applySignCountUpdate(retained.signCountUpdate, retained.exchangeId.toUint8Array(), options);
   }
@@ -238,13 +254,7 @@ async function commitLogin(
     }
     throw new WakeError("auth_failed");
   }
-  // With app status changes first and revocation second, either login interleaving revokes the session.
-  // Check before counter updates so an update failure cannot skip revocation.
-  const currentCredential = await options.credentials.getCredential(credential.credentialId);
-  if (!currentCredential || currentCredential.status !== "active") {
-    await options.store.revokeSessionsByCredential(credential.credentialId);
-    throw new WakeError("auth_failed");
-  }
+  await checkLoginSession(session.sessionId, options);
   if (update) {
     await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
   }
