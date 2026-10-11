@@ -12,11 +12,18 @@
 @wake-protocol/core     bytes、codec、crypto、@scure/base    WAKE プロトコル
           ↑
 @wake-protocol/vectors  core、bytes、codec、@scure/base      §16 テストベクターの生成と照合（開発用）
+@wake-protocol/server   core、bytes、codec、crypto、@scure/base   KX と SM のサーバー（フレームワーク非依存）
+@wake-protocol/client   core、bytes、codec、crypto、@scure/base   KX と SM のクライアント（ブラウザと Node）
+          ↑
+@wake-protocol/demo     server、client、汎用パッケージ、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```
 
 - **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。
 - **core** は汎用パッケージを組み合わせて WAKE を実装します。中は `spec/`（ラベル・ブランド型・エラーなど仕様全体の定義）、`keys/`、`kx/`、`msg/`、`ta/`、`et/` に分けています。
 - **vectors** は開発用の道具です。製品のコードから vectors に依存してはいけません。
+- **server** と **client** は互いに依存しません。両者は §7・§8・§12 のワイヤ形式（JSON と `Wire`）だけでつながります。client と server を組み合わせるテストは、両方に依存できる demo に置きます。
+- server は `Request` を受け取り `Response` を返す関数（`handle`）だけを持ち、Web フレームワークに依存しません。WebAuthn の検証（§6.2）は server の `webauthn/` に自前で書いています（理由は §5）。
+- **demo** は開発用です。WAKE の範囲外のパスキー登録と、ブラウザで動かす画面を持ちます。製品のコードから demo に依存してはいけません。
 
 ## 2. 原則
 
@@ -122,11 +129,17 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 | LP | 自前。`it-length-prefixed` などはストリーム向けで、長さの形式も既定は varint（u32 に差し替えはできる）。フィールド数や固定長を検査する厳密な復号の機能はなく、依存も増える。自前なら30行ほどで済む |
 | ASCII、UTF-8、Latin-1 | 自前で `codec/text.ts` にまとめる。`@scure/base` にも ascii / utf8 はあるが、`decode` が「文字列 → バイト列」と向きが逆で紛らわしく、減る行数も少ない。Latin-1 はない |
 | 暗号 | 標準の Web Crypto API を使う |
+| WebAuthn の検証 | 自前（server の `webauthn/`）。`@simplewebauthn/server` は依存が多く、§6.4 の署名カウンターの規則（BE が1なら値が戻っても受理する）とも合わない。必要なのは ES256 の assertion の検証だけで、CBOR の解析も要らない（公開鍵は SPKI で保存する。SPEC-NOTES.md） |
+| ECDSA の DER 署名 | 自前（crypto の `ecdsaDerToRaw` / `ecdsaRawToDer`）。Web Crypto は `r‖s` 形式しか受け付けない。厳密な DER の解析は50行ほどで、非最小の整数・余分なバイト・長形式の長さを拒否することをテストで確かめている |
+| 厳密な JSON（I-JSON） | 自前（codec の `parseIJson`）。`JSON.parse` は重複したキーや孤立サロゲートを受け付けてしまう。§4.8 はこれらの拒否を求める |
+| HTTP サーバー（demo のみ） | `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）。どちらも実行時の依存がない。server 本体は `Request` / `Response` だけを使うので、フレームワークは差し替えられる |
+| ブラウザ用のバンドル（demo の開発用） | `esbuild` 0.28.2（MIT）。実行時の依存はなく、プラットフォームごとのバイナリだけを持つ |
+| e2e（demo の開発用） | `@playwright/test` 1.63.0（Apache-2.0）。依存は `playwright` だけ。Chromium の仮想認証器（CDP の `WebAuthn` ドメイン）で、ブラウザのパスキーを使ったログインを確かめる |
 
 `TextDecoder("latin1")` は使いません。実際には Windows-1252 として扱われ、`0x80` が U+20AC（€）になるので、ET の obs-text が壊れます。
 
 ## 6. テスト
-- テストは、対象のコードと同じパッケージに置きます。複数のパッケージを組み合わせるテストは、その両方に依存してよい場所（core や vectors）に置きます。汎用パッケージどうしにテストのためだけの依存を作らないためです。
+- テストは、対象のコードと同じパッケージに置きます。複数のパッケージを組み合わせるテストは、その両方に依存してよい場所（core、vectors、demo）に置きます。汎用パッケージどうしにテストのためだけの依存を作らないためです。
 - 実装から独立した方法でも照合します。`node:crypto` で計算し直したり（`crosscheck.test.ts`）、テストの中で独自に書いたデコーダーを使ったりします（`v05-rules.test.ts`）。これらを実装の関数で置き換えないでください。
 - 受け取る側の検査は、壊れたバイト列をデコーダーに直接渡して確かめます（`et-decode.test.ts`）。エンコーダーを通すテストだけでは、受け取る側の検査を消しても気づけません。
 - 境界値は両側を確かめます。たとえば、`issuedAt` が 2^53−1 なら通り、2^53 なら拒否されることの両方です。片側だけだと、拒否された原因が検査なのか、データの壊れなのかが分かりません。
@@ -144,5 +157,7 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 1. WAKE の仕様を知らなくても意味が通るか？
    - **はい** → 汎用パッケージに置く。バイト値・整数・型は bytes、符号化と文字列は codec、Web Crypto は crypto。どれにも収まらず、ほかの汎用パッケージに依存したくなったら、新しいパッケージにするか core に置くかを検討する（汎用パッケージどうしの依存は作らない）。
    - **いいえ** → core に置く。仕様全体で使う定義は `spec/`、それ以外は対応するモジュール（`keys/`、`kx/`、`msg/`、`ta/`、`et/`）。
-2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/src/testing.ts`
+   - WAKE のサーバー・クライアントとしての処理（HTTP の受け答え、状態の保存、WebAuthn の検証、再送）→ server または client。どちらにも必要な WAKE の定義は core に置く。
+2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/src/testing.ts`。サーバー側のテスト用の道具（`SoftAuthenticator`）→ `server/src/testing.ts`
 3. テストベクターの生成と実行 → `vectors/src/`。コマンドラインの入口は `vectors/scripts/` に薄く置く。
+4. client と server を組み合わせるテスト、デモ画面、e2e → demo
