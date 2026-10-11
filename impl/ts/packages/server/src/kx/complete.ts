@@ -205,6 +205,10 @@ async function commitLogin(
       if (cached) {
         return cached;
       }
+      // An identical winner may not have committed yet: resend the same body (§7.7) for replay; clones fail §6.4.
+      if (ex?.state === "PENDING") {
+        throw new WakeError("retry");
+      }
       throw new WakeError("auth_failed");
     }
     // A later commit failure only leaves the counter advanced, which is safe; no replay update is needed.
