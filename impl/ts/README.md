@@ -56,7 +56,7 @@
 | `vectors/test/vectors.test.ts` | §16 保存済みベクターと実装の照合 |
 | `vectors/test/generate.test.ts` | §16 生成結果の安定性の検査 |
 
-`npm test` はすべてのパッケージのテストを実行します。汎用パッケージ同士は依存しません。TypeScript 設定は `tsconfig.base.json` に共通化し、各パッケージから `extends` します。
+`npm test` は最初に `scripts/check-deps.ts` でパッケージ間の依存方向を明示した一覧と宣言・import を照合し、検査器の回帰テストの後、すべてのパッケージのテストを実行します。汎用パッケージ同士は依存しません。import の抽出には TypeScript のコンパイラ API を使い、動的 import やコメントを挟んだ import も検査します。TypeScript 設定は `tsconfig.base.json` に共通化し、各パッケージから `extends` します。
 
 ## 使い方
 

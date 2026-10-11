@@ -1,0 +1,6 @@
+{
+  "name": "@wake-protocol/crypto",
+  "dependencies": {
+    "@wake-protocol/core": "0.0.0"
+  }
+}

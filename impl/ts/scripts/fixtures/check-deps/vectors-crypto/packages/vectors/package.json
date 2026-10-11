@@ -1,0 +1,6 @@
+{
+  "name": "@wake-protocol/vectors",
+  "dependencies": {
+    "@wake-protocol/crypto": "0.0.0"
+  }
+}

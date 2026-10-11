@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",
-    "test": "npm test --workspaces",
+    "test": "node scripts/check-deps.ts && node --test scripts/check-deps.test.ts && npm test --workspaces",
     "vectors": "npm run vectors -w @wake-protocol/vectors"
   },
   "devDependencies": {

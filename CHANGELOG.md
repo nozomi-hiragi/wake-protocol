@@ -5,7 +5,7 @@
 - TypeScript の仮実装（暗号コア）を `impl/ts/` に追加
 - §16 のテストベクターを `spec/test-vectors/` に追加
 - TypeScript の仮実装を `@wake-protocol/bytes`、`@wake-protocol/codec`、`@wake-protocol/crypto`、`@wake-protocol/core`、`@wake-protocol/vectors` のワークスペースに分割
-- TypeScript 設定は `tsconfig.base.json` に共通化
+- パッケージ間の依存方向を明示し、宣言と import を検査。動的 import やコメントを挟んだ import も TypeScript のコンパイラ API で抽出し、検査器の回帰テストを追加。TypeScript 設定は `tsconfig.base.json` に共通化
 - `bytesToAscii` が大きな ASCII 入力でスタックあふれを起こす問題を修正
 - 16進・Base64url の変換に `@scure/base` 2.4.0 を採用
 - TypeScript API の破壊的変更: `u8` / `u16` / `u32` / `u64` と `readU*` を `@wake-protocol/bytes` の `Byte` / `Byte2` / `Byte4` / `Byte8` と `.number` に置換。`equalBytes` は `Bytes.equals`、`concat` は `Bytes.concat`、`lpDecodeAll` は `@wake-protocol/codec` の `decodeU32LengthPrefixed`、`timeToU64` / `u64ToTime` は `@wake-protocol/bytes` の `numberToBigInt` / `bigIntToNumber` に置換
