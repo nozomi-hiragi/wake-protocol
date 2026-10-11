@@ -27,6 +27,8 @@ import type { C2sCryptoKey, S2cCryptoKey, MsgHeader } from "@wake-protocol/core"
 import { WakeClient } from "../src/index.ts";
 import type { GetAssertion, GetAssertionOptions, WakeClientOptions } from "../src/index.ts";
 
+export const TTL = 120_000;
+
 export const encode = (b: Bytes) => base64urlnopad.encode(b.toUint8Array());
 
 export const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
@@ -49,6 +51,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     localTime: 1_000_000,
     serverTime: 2_000_000,
     assertionCalls: 0,
+    onAssertion: undefined as (() => void) | undefined,
     start: {
       version: "WAKE/1",
       exchangeId: encode(exchangeId),
@@ -56,12 +59,14 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
       epoch: 0,
       serverNonce: encode(serverNonce),
       serverPublicKey: encode(pair.publicKey),
-      expiresAt: 1_001_000,
+      // Server clock; deliberately unrelated to the client clock.
+      serverTime: 2_000_000,
+      expiresAt: 2_000_000 + TTL,
       webauthn: {
         rpId: "example.com",
         allowCredentials: [],
         userVerification: "required",
-        timeout: 100,
+        timeout: TTL - 30_000,
       },
     } as Record<string, unknown>,
     startResponse: undefined as Response | undefined,
@@ -83,6 +88,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
   };
   const getAssertion: GetAssertion = async (opts) => {
     f.assertionCalls++;
+    f.onAssertion?.();
     f.assertionOptions = opts;
     return {
       id: "AQ",

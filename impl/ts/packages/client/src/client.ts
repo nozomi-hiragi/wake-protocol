@@ -4,6 +4,8 @@ import { Bytes } from "@wake-protocol/bytes";
 import { utf8ToBytes } from "@wake-protocol/codec";
 import {
   WakeError,
+  decodeBase64urlField,
+  parseJsonObject,
   asExchangeId,
   asSessionId,
   asServerNonce,
@@ -35,7 +37,7 @@ import type {
   LoginTranscriptHash,
 } from "@wake-protocol/core";
 import type { GetAssertion, GetAssertionOptions } from "./assertion.ts";
-import { decodeBinary, integer, object, parseJson, responseJson } from "./json.ts";
+import { integer, object, responseJson } from "./json.ts";
 
 export interface WakeClientOptions {
   baseUrl: string;
@@ -109,19 +111,24 @@ async function parseStart(value: Record<string, unknown>) {
   if (value.version !== "WAKE/1" || value.epoch !== 0) {
     throw new WakeError("bad_request");
   }
-  const exchangeId = asExchangeId(decodeBinary(value.exchangeId));
-  const sessionId = asSessionId(decodeBinary(value.sessionId));
-  const serverNonce = asServerNonce(decodeBinary(value.serverNonce));
+  const exchangeId = asExchangeId(decodeBase64urlField(value.exchangeId, "bad_request"));
+  const sessionId = asSessionId(decodeBase64urlField(value.sessionId, "bad_request"));
+  const serverNonce = asServerNonce(decodeBase64urlField(value.serverNonce, "bad_request"));
   let serverPublicKey;
   try {
-    serverPublicKey = await parseEcPublicKey(decodeBinary(value.serverPublicKey));
+    serverPublicKey = await parseEcPublicKey(decodeBase64urlField(value.serverPublicKey, "bad_request"));
   } catch (e) {
     if (e instanceof WakeError) {
       throw new WakeError("bad_request");
     }
     throw e;
   }
+  // Both are server time. Only their difference is used (the remaining lifetime of the exchange).
+  const serverTime = integer(value.serverTime);
   const expiresAt = integer(value.expiresAt);
+  if (expiresAt <= serverTime) {
+    throw new WakeError("bad_request");
+  }
   const w = object(value.webauthn);
   if (typeof w.rpId !== "string" || w.userVerification !== "required" || !Array.isArray(w.allowCredentials)) {
     throw new WakeError("bad_request");
@@ -131,7 +138,7 @@ async function parseStart(value: Record<string, unknown>) {
     if (c.type !== "public-key" || typeof c.id !== "string") {
       throw new WakeError("bad_request");
     }
-    decodeBinary(c.id);
+    decodeBase64urlField(c.id, "bad_request");
     if (c.transports !== undefined && (!Array.isArray(c.transports) || !c.transports.every((t) => typeof t === "string"))) {
       throw new WakeError("bad_request");
     }
@@ -152,28 +159,29 @@ async function parseStart(value: Record<string, unknown>) {
     sessionId,
     serverNonce,
     serverPublicKey,
-    expiresAt,
+    ttl: expiresAt - serverTime,
     webauthn,
   };
 }
 
-type LoginStart = Awaited<ReturnType<typeof parseStart>>;
+type ParsedStart = Awaited<ReturnType<typeof parseStart>>;
+type LoginStart = ParsedStart & { deadline: number };
 type LoginRequest = { mode: "discoverable" } | {
   mode: "username";
   username: string;
 };
 
 function parseEncryptedError(plaintext: Uint8Array): string | undefined {
-  let json: unknown;
+  let json: Record<string, unknown> | undefined;
   try {
-    json = parseJson(plaintext);
+    json = parseJsonObject(plaintext, "bad_request");
   } catch (e) {
     if (!(e instanceof WakeError)) {
       throw e;
     }
     // Generic application plaintext may be arbitrary binary, not JSON.
   }
-  if (json !== null && typeof json === "object" && !Array.isArray(json) && Object.keys(json).length === 1 && "error" in json) {
+  if (json !== undefined && Object.keys(json).length === 1 && "error" in json) {
     const error = json.error;
     if (error !== null && typeof error === "object" && !Array.isArray(error) && "code" in error && typeof error.code === "string") {
       return error.code;
@@ -224,7 +232,7 @@ export class WakeClient {
     this.#state = undefined;
     const start = await this.#startLogin(req);
     const prepared = await this.#prepareLogin(start);
-    const completed = await this.#completeWithRetry(prepared.body, start.expiresAt, generation);
+    const completed = await this.#completeWithRetry(prepared.body, start.deadline, generation);
     const info = await this.#verifyLogin(start, prepared, completed.json);
     if (generation !== this.#generation) {
       throw new WakeError("auth_failed");
@@ -249,7 +257,13 @@ export class WakeClient {
     if (response.status !== 200 || typeof json.error === "string") {
       throw new WakeError(typeof json.error === "string" ? json.error : "auth_failed");
     }
-    return parseStart(json);
+    const arrivedAt = this.#now();
+    const start = await parseStart(json);
+    // The offset is not known yet, so the retry limit is local: arrival time plus the remaining lifetime.
+    return {
+      ...start,
+      deadline: arrivedAt + start.ttl,
+    };
   }
 
   async #prepareLogin(start: LoginStart): Promise<PreparedLogin> {
@@ -287,41 +301,54 @@ export class WakeClient {
     };
   }
 
-  async #completeWithRetry(body: string, expiresAt: number, generation: number) {
+  /** The first attempt is always sent; later ones only before the local deadline. */
+  async #completeWithRetry(body: string, deadline: number, generation: number) {
     let delay = 100;
-    for (;;) {
-      if (generation !== this.#generation || this.#now() >= expiresAt) {
+    for (let attempt = 0;; attempt++) {
+      if (generation !== this.#generation || (attempt > 0 && this.#now() >= deadline)) {
         throw new WakeError("auth_failed");
       }
-      let response: Response | undefined;
-      try {
-        response = await this.#post("/auth/complete", body, "application/json");
-      } catch {
-        // Only fetch failures are retried; parsing/verification errors are final.
+      const received = await this.#tryComplete(body);
+      if (received) {
+        return received;
       }
-      const arrivedAt = this.#now();
-      let json: Record<string, unknown> | undefined;
-      if (response && (response.status !== 503 || isJsonResponse(response))) {
-        json = await responseJson(response, "auth_failed");
+      const remaining = deadline - this.#now();
+      if (remaining <= 0) {
+        throw new WakeError("auth_failed");
       }
-      if (!response || response.status === 503 || json?.error === "retry") {
-        const remaining = expiresAt - this.#now();
-        if (remaining <= 0) {
-          throw new WakeError("auth_failed");
-        }
-        await this.#sleep(Math.min(delay, remaining));
-        delay = Math.min(delay * 2, 2000);
-        continue;
-      }
-      if (response.status !== 200 || json!.error !== undefined) {
-        const code = json!.error;
-        throw new WakeError(typeof code === "string" ? code : "auth_failed");
-      }
-      return {
-        json: json!,
-        arrivedAt,
-      };
+      await this.#sleep(Math.min(delay, remaining));
+      delay = Math.min(delay * 2, 2000);
     }
+  }
+
+  /** Returns undefined when the same body must be resent (§7.7 step 5, §7.8). */
+  async #tryComplete(body: string): Promise<{ json: Record<string, unknown>; arrivedAt: number } | undefined> {
+    let response: Response;
+    let bytes: Uint8Array | undefined;
+    let arrivedAt: number;
+    try {
+      response = await this.#post("/auth/complete", body, "application/json");
+      arrivedAt = this.#now();
+      if (response.status >= 500 && !isJsonResponse(response)) {
+        return undefined;
+      }
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } catch {
+      // Only transport failures (including a broken body stream) are retried.
+      return undefined;
+    }
+    const json = parseJsonObject(bytes, "auth_failed");
+    if (json.error === "retry") {
+      return undefined;
+    }
+    if (response.status !== 200 || json.error !== undefined) {
+      const code = json.error;
+      throw new WakeError(typeof code === "string" ? code : "auth_failed");
+    }
+    return {
+      json,
+      arrivedAt,
+    };
   }
 
   async #verifyLogin(start: LoginStart, prepared: PreparedLogin, value: Record<string, unknown>): Promise<SessionInfo> {
@@ -335,7 +362,7 @@ export class WakeClient {
       absoluteExpiresAt: integer(value.absoluteExpiresAt, Number.MAX_SAFE_INTEGER, "auth_failed"),
       idleTimeoutSec: integer(value.idleTimeoutSec, 0xffffffff, "auth_failed"),
     };
-    const macBytes = decodeBinary(value.serverFinished, "auth_failed");
+    const macBytes = decodeBase64urlField(value.serverFinished, "auth_failed");
     if (macBytes.length !== 32) {
       throw new WakeError("auth_failed");
     }
@@ -355,7 +382,11 @@ export class WakeClient {
   }
 
   /** A stale_request is retried once; other network failures propagate. */
-  request(context: string, plaintext: Uint8Array): Promise<Uint8Array> {
+  async request(context: string, plaintext: Uint8Array): Promise<Uint8Array> {
+    // §8.8: wake/ and wake- are reserved; wake/session and wake/logout use the private path.
+    if (context.startsWith("wake/") || context.startsWith("wake-")) {
+      throw new WakeError("bad_request");
+    }
     return this.#request(context, plaintext);
   }
 
@@ -442,7 +473,7 @@ export class WakeClient {
 
   async #acceptResponse(state: SessionState, pending: PendingRequest, received: ReceivedResponse): Promise<Uint8Array> {
     if (received.response.status !== 200 || isJsonResponse(received.response)) {
-      const json = object(parseJson(received.bytes));
+      const json = parseJsonObject(received.bytes, "bad_request");
       const code = json.wakeError;
       if (typeof code !== "string" || !OUTER_CODES.has(code)) {
         throw new WakeError("bad_request");
@@ -468,8 +499,8 @@ export class WakeClient {
 
   async session(): Promise<WakeSessionInfo> {
     const state = this.#state;
-    const value = object(parseJson(await this.request("wake/session", EMPTY_JSON)));
-    const id = asSessionId(decodeBinary(value.sessionId));
+    const value = parseJsonObject(await this.#request("wake/session", EMPTY_JSON), "bad_request");
+    const id = asSessionId(decodeBase64urlField(value.sessionId, "bad_request"));
     const epoch = integer(value.epoch, 0xffffffff);
     if (!state || !id.equals(state.sessionId) || epoch !== state.epoch || typeof value.rekeyRecommended !== "boolean") {
       throw new WakeError("bad_request");
@@ -494,7 +525,7 @@ export class WakeClient {
       if (!state) {
         return;
       }
-      object(parseJson(await this.#request("wake/logout", EMPTY_JSON, true)));
+      parseJsonObject(await this.#request("wake/logout", EMPTY_JSON, true), "bad_request");
     } finally {
       if (this.#state === state) {
         this.#state = undefined;

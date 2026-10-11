@@ -1,6 +1,6 @@
 // Spec §6.1, §7.7: browser WebAuthn assertion adapter.
 import { base64urlnopad } from "@scure/base";
-import { decodeBinary } from "./json.ts";
+import { decodeBase64urlField } from "@wake-protocol/core";
 
 export interface GetAssertionOptions {
   challenge: Uint8Array;
@@ -38,7 +38,7 @@ export const navigatorGetAssertion: GetAssertion = async (options) => {
       challenge: new Uint8Array(options.challenge),
       allowCredentials: options.allowCredentials.map((c) => ({
         type: c.type,
-        id: new Uint8Array(decodeBinary(c.id)),
+        id: new Uint8Array(decodeBase64urlField(c.id, "bad_request")),
         transports: c.transports as AuthenticatorTransport[] | undefined,
       })),
     },

@@ -5,7 +5,7 @@ import { base64urlnopad } from "@scure/base";
 import { utf8ToBytes } from "@wake-protocol/codec";
 import { DIR_C2S, newRequestId, newSessionId } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
-import { fixture, hasCode, jsonResponse, readJson } from "./fixture.ts";
+import { TTL, fixture, hasCode, jsonResponse, readJson } from "./fixture.ts";
 
 const login = { mode: "discoverable" } as const;
 
@@ -21,7 +21,7 @@ test("real KX challenge, Finished and SM session/logout", async () => {
   assert.equal(f.assertionOptions!.challenge.length, 32);
   assert.equal(f.assertionOptions!.userVerification, "required");
   assert.equal(f.assertionOptions!.rpId, "example.com");
-  assert.equal(f.assertionOptions!.timeout, 100);
+  assert.equal(f.assertionOptions!.timeout, TTL - 30_000);
   const session = await f.client.session();
   assert.equal(session.sessionId, info.sessionId);
   assert.equal(session.authTime, 2_000_000);
@@ -82,24 +82,189 @@ for (const kind of ["network", "503", "retry-body"] as const) {
   });
 }
 
-test("retries stop exactly at expiresAt", async () => {
+// The test deadline is startArrivedAt + (expiresAt - serverTime) = localTime + 30 s.
+function setShortTtl(f: Awaited<ReturnType<typeof fixture>>) {
+  f.start.expiresAt = (f.start.serverTime as number) + 30_000;
+}
+
+test("retries stop exactly at the local deadline (start arrival + expiresAt - serverTime)", async () => {
   const f = await fixture();
-  f.start.expiresAt = f.localTime + 300;
+  setShortTtl(f);
+  const arrived = f.localTime;
   f.completeAction = () => {
     throw new TypeError("offline");
   };
   await assert.rejects(f.client.login(login), hasCode("auth_failed"));
-  assert.equal(f.completeBodies.length, 2);
-  assert.equal(f.completeBodies[0], f.completeBodies[1]);
-  assert.deepEqual(f.sleeps, [100, 200]);
+  assert.equal(f.sleeps.reduce((a, b) => a + b, 0), 30_000);
+  // The last sleep ends exactly at the deadline, where no further attempt is sent.
+  assert.equal(f.completeBodies.length, f.sleeps.length);
+  assert.equal(f.localTime, arrived + 30_000);
+  assert.equal(new Set(f.completeBodies).size, 1);
   assert.equal(f.client.loggedIn, false);
 });
 
-test("already expired exchange sends no completion", async () => {
+test("an attempt just before the local deadline is sent", async () => {
   const f = await fixture();
-  f.start.expiresAt = f.localTime;
+  setShortTtl(f);
+  const deadline = f.localTime + 30_000;
+  f.completeAction = (attempt) => {
+    if (attempt === 1) {
+      f.localTime = deadline - 200;
+      throw new TypeError("offline");
+    }
+    return undefined;
+  };
+  await f.client.login(login);
+  assert.equal(f.completeBodies.length, 2);
+  assert.deepEqual(f.sleeps, [100]);
+});
+
+test("no attempt is sent once the local deadline is reached", async () => {
+  const f = await fixture();
+  setShortTtl(f);
+  const deadline = f.localTime + 30_000;
+  f.completeAction = () => {
+    f.localTime = deadline - 100;
+    throw new TypeError("offline");
+  };
   await assert.rejects(f.client.login(login), hasCode("auth_failed"));
-  assert.equal(f.completeBodies.length, 0);
+  assert.equal(f.completeBodies.length, 1);
+  assert.deepEqual(f.sleeps, [100]);
+  assert.equal(f.localTime, deadline);
+});
+
+test("a failure after the deadline stops without sleeping", async () => {
+  const f = await fixture();
+  setShortTtl(f);
+  f.completeAction = () => {
+    f.localTime += 30_001;
+    throw new TypeError("offline");
+  };
+  await assert.rejects(f.client.login(login), hasCode("auth_failed"));
+  assert.equal(f.completeBodies.length, 1);
+  assert.equal(f.sleeps.length, 0);
+});
+
+test("the first completion is sent even if the deadline passed during WebAuthn", async () => {
+  const f = await fixture();
+  setShortTtl(f);
+  f.onAssertion = () => {
+    f.localTime += 10 * TTL;
+  };
+  await f.client.login(login);
+  assert.equal(f.completeBodies.length, 1);
+});
+
+for (const [name, skew] of [
+  ["ahead of", 10 * TTL],
+  ["behind", -10 * TTL],
+  ["10 minutes ahead of", 600_000],
+  ["10 minutes behind", -600_000],
+] as const) {
+  test(`login works with a device clock ${name} the server by more than the TTL`, async () => {
+    const f = await fixture();
+    f.localTime = f.serverTime + skew;
+    const info = await f.client.login(login);
+    assert.equal(f.completeBodies.length, 1);
+    assert.equal(info.serverTime, f.serverTime);
+    await f.client.session();
+    assert.equal(f.requests[0]!.issuedAt, f.serverTime);
+  });
+}
+
+for (const kind of ["body-stream", "502", "504", "json-500-retry"] as const) {
+  test(`auth complete ${kind} is resent with the same body`, async () => {
+    const f = await fixture();
+    f.completeAction = (attempt) => {
+      if (attempt > 1) {
+        return;
+      }
+      if (kind === "body-stream") {
+        let sent = false;
+        return new Response(new ReadableStream({
+          pull(c) {
+            if (sent) {
+              c.error(new TypeError("connection lost"));
+              return;
+            }
+            sent = true;
+            c.enqueue(utf8ToBytes('{"serverTi'));
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (kind === "json-500-retry") {
+        return jsonResponse({ error: "retry" }, 500);
+      }
+      return new Response(`<html>${kind} gateway</html>`, {
+        status: Number(kind),
+        headers: { "Content-Type": "text/html" },
+      });
+    };
+    await f.client.login(login);
+    assert.equal(f.completeBodies.length, 2);
+    assert.equal(f.completeBodies[0], f.completeBodies[1]);
+    assert.equal(f.assertionCalls, 1);
+  });
+}
+
+test("a JSON 500 with another error is final", async () => {
+  const f = await fixture();
+  f.completeAction = () => jsonResponse({ error: "auth_failed" }, 500);
+  await assert.rejects(f.client.login(login), hasCode("auth_failed"));
+  assert.equal(f.completeBodies.length, 1);
+});
+
+test("reserved wake/ and wake- contexts are rejected locally and keep the keys", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  for (const context of ["wake/logout", "wake/session", "wake-x", "wake/"]) {
+    await assert.rejects(f.client.request(context, data), hasCode("bad_request"));
+  }
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.client.loggedIn, true);
+  await f.client.session();
+  assert.equal(f.requests.length, 1);
+});
+
+for (const [name, mutate] of [
+  ["missing serverTime", (v: Record<string, unknown>) => {
+    delete v.serverTime;
+  }],
+  ["fractional serverTime", (v: Record<string, unknown>) => {
+    v.serverTime = 1.5;
+  }],
+  ["negative serverTime", (v: Record<string, unknown>) => {
+    v.serverTime = -1;
+  }],
+  ["string serverTime", (v: Record<string, unknown>) => {
+    v.serverTime = "2000000";
+  }],
+  ["expiresAt equal to serverTime", (v: Record<string, unknown>) => {
+    v.expiresAt = v.serverTime;
+  }],
+  ["expiresAt before serverTime", (v: Record<string, unknown>) => {
+    v.expiresAt = (v.serverTime as number) - 1;
+  }],
+] as const) {
+  test(`start with ${name} is bad_request and sends no completion`, async () => {
+    const f = await fixture();
+    mutate(f.start);
+    await assert.rejects(f.client.login(login), hasCode("bad_request"));
+    assert.equal(f.completeBodies.length, 0);
+  });
+}
+
+test("non-canonical base64url trailing bits are rejected as bad_request", async () => {
+  // "AQ" is canonical for [1]; "AR" decodes to the same byte with nonzero trailing bits.
+  const f = await fixture();
+  f.start.sessionId = "A".repeat(42) + "R";
+  await assert.rejects(f.client.login(login), hasCode("bad_request"));
+  const g = await fixture();
+  g.start.serverNonce = (g.start.serverNonce as string).slice(0, -1) + "B";
+  await assert.rejects(g.client.login(login), hasCode("bad_request"));
 });
 
 for (const field of ["serverTime", "absoluteExpiresAt", "idleTimeoutSec", "serverFinished", "sessionId", "epoch"]) {
