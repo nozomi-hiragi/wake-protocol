@@ -116,7 +116,7 @@ const finishedKey = await hmacKey(keys.fkC); // FinishedCryptoKeyC
 ```
 
 - 外部から受け取った鍵の配列は、`asC2sKey(u8)` などで長さと役割のブランドを付けてから渡します。
-- `seal` / `open` / `openParsed` と testing の `sealWithIv` は `C2sCryptoKey | S2cCryptoKey` を受け取ります。`open` の `expectDir` は `MsgHeader["dir"]`（`DIR_C2S | DIR_S2C`）です。
+- `seal` / `sealWithHeader` / `open` / `openParsed` は、鍵の役割と方向を組にして受け取ります。`C2sCryptoKey` は `DIR_C2S`、`S2cCryptoKey` は `DIR_S2C` の場合だけ使えます（`open` / `openParsed` の `expectDir` も同じ）。testing の `sealWithIv` は `C2sCryptoKey | S2cCryptoKey` を受け取ります。
 - `clientFinished` / `verifyClientFinished` は `FinishedKeyC | FinishedCryptoKeyC`、`serverFinished` / `verifyServerFinished` は `FinishedKeyS | FinishedCryptoKeyS` を受け取ります。
 - 汎用 crypto の `aesGcmEncrypt` / `aesGcmDecrypt` は、AES-GCM・256ビット・必要な用途（encrypt / decrypt）を持つ鍵かを検査し、不一致は `TypeError` にします。IV が12バイトでなければ `RangeError` です。復号の `null` は認証失敗だけを表し、それ以外の例外は投げます。core の `seal` / `open` / `openParsed` でも、合わない鍵は `TypeError`、認証失敗は `WakeError("reauth")` になります。Finished の関数に合わない鍵を渡した場合は、Web Crypto の `DOMException`（`InvalidAccessError`）がそのまま伝わります。
 

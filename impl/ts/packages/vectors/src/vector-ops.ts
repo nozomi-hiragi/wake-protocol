@@ -26,6 +26,8 @@ import {
   asTaBindingHash,
   asTaNonce,
   asTranscriptHash,
+  DIR_C2S,
+  DIR_S2C,
   checkContent,
   clientFinished,
   createOperationIdentity,
@@ -253,13 +255,11 @@ export async function runCase(suite: string, o: Obj): Promise<Obj> {
           const expectDir = num(o, "expectDir");
           if (expectDir !== 1 && expectDir !== 2) throw new WakeError("bad_request", "unexpected dir");
           const raw = bytes(o, "key");
-          const key = await aesKey(expectDir === 1 ? asC2sKey(raw) : asS2cKey(raw));
-          const { plaintext } = await openWire(
-            key,
-            bytes(o, "wire"),
-            expectDir,
-            o.maxPlaintext === undefined ? undefined : { maxPlaintext: num(o, "maxPlaintext") },
-          );
+          const wire = bytes(o, "wire");
+          const opts = o.maxPlaintext === undefined ? undefined : { maxPlaintext: num(o, "maxPlaintext") };
+          const { plaintext } = expectDir === DIR_C2S
+            ? await openWire(await aesKey(asC2sKey(raw)), wire, DIR_C2S, opts)
+            : await openWire(await aesKey(asS2cKey(raw)), wire, DIR_S2C, opts);
           return { plaintext: hex.encode(plaintext.toUint8Array()) };
         }
         default:

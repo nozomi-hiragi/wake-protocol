@@ -106,9 +106,11 @@ describe("login round trip", async () => {
     bodyFlip[wire.length - 17]! ^= 1;
     await expectCode(open(recvKey, bodyFlip, DIR_C2S), "reauth");
 
-    // The s2c key must not open a c2s message.
+    // The s2c key must not open a c2s message (a deliberate role mismatch).
+    // @ts-expect-error The key role does not match the direction.
     await expectCode(open(await aesKey(ks.kS2c), wire, DIR_C2S), "reauth");
-    // Wrong direction is rejected before decryption.
+    // Wrong direction is rejected before decryption (a deliberate role mismatch).
+    // @ts-expect-error The key role does not match the direction.
     await expectCode(open(recvKey, wire, DIR_S2C), "bad_request");
   });
 

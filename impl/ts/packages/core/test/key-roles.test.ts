@@ -11,6 +11,7 @@ import {
   type ServerFinishedInput,
   Bytes,
   DIR_C2S,
+  DIR_S2C,
   WakeError,
   aesKey,
   asC2sKey,
@@ -31,11 +32,13 @@ import {
   verifyClientFinished,
   verifyServerFinished,
 } from "../src/index.ts";
+import { sealWithHeader } from "../src/msg/aead.ts";
 import { sealWithIv } from "../src/testing.ts";
 
 const raw = new Uint8Array(32).fill(7);
 const th = asTranscriptHash(new Uint8Array(32));
-const header = (): MsgHeader => ({
+// Narrowed so that seal / open see a C2S header; the key roles are checked against dir.
+const header = (): MsgHeader & { dir: typeof DIR_C2S } => ({
   dir: DIR_C2S,
   sessionId: newSessionId(),
   epoch: 0,
@@ -76,11 +79,27 @@ async function checkTypes(h: MsgHeader, p: ParsedWire, input: ServerFinishedInpu
   // @ts-expect-error Imported message keys must have a role.
   await open(unbranded, new Bytes([]), DIR_C2S);
   // @ts-expect-error Imported message keys must have a role.
-  await openParsed(unbranded, p);
+  await openParsed(unbranded, p, DIR_C2S);
   // @ts-expect-error Testing helpers enforce message key roles too.
   await sealWithIv(fkS, h, new Bytes([]));
   // @ts-expect-error Only the two message directions are valid.
   await open(s2c, new Bytes([]), 3);
+  const c2sHeader: MsgHeader & { dir: typeof DIR_C2S } = { ...h, dir: DIR_C2S };
+  const s2cHeader: MsgHeader & { dir: typeof DIR_S2C } = { ...h, dir: DIR_S2C };
+  // @ts-expect-error An S2C key cannot seal a C2S message.
+  await seal(s2c, c2sHeader, new Bytes([]));
+  // @ts-expect-error A C2S key cannot seal an S2C message.
+  await seal(c2s, s2cHeader, new Bytes([]));
+  // @ts-expect-error An S2C key cannot seal a C2S message.
+  await sealWithHeader(s2c, c2sHeader, new Bytes([]));
+  // @ts-expect-error A C2S key cannot open a message expected as S2C.
+  await open(c2s, new Bytes([]), DIR_S2C);
+  // @ts-expect-error An S2C key cannot open a message expected as C2S.
+  await open(s2c, new Bytes([]), DIR_C2S);
+  // @ts-expect-error A C2S key cannot open a message expected as S2C.
+  await openParsed(c2s, p, DIR_S2C);
+  // @ts-expect-error An S2C key cannot open a message expected as C2S.
+  await openParsed(s2c, p, DIR_C2S);
 }
 
 test("imported Finished keys produce and verify the same MACs as raw keys", async () => {
@@ -113,7 +132,7 @@ test("seal/open reject AES-128, wrong algorithms and missing key usages with Typ
     await assert.rejects(seal(unsafe, h, plaintext), TypeError);
     await assert.rejects(sealWithIv(unsafe, h, plaintext), TypeError);
     await assert.rejects(open(unsafe, wire, DIR_C2S), TypeError);
-    await assert.rejects(openParsed(unsafe, parsed), TypeError);
+    await assert.rejects(openParsed(unsafe, parsed, DIR_C2S), TypeError);
   }
   const encryptOnly = await subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]) as C2sCryptoKey;
   const decryptOnly = await subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]) as C2sCryptoKey;
@@ -126,4 +145,14 @@ test("authentication failure still requests reauthentication", async () => {
   const wire = (await seal(key, header(), new Bytes([1]))).toUint8Array();
   wire[wire.length - 1]! ^= 1;
   await assert.rejects(open(key, wire, DIR_C2S), (e: unknown) => e instanceof WakeError && e.code === "reauth");
+});
+
+test("openParsed rejects a parsed direction that differs from expectDir before decrypting", async () => {
+  const wire = await seal(await aesKey(asC2sKey(raw)), header(), new Bytes([1]));
+  const parsed = parseWire(wire);
+  // The same key bytes would decrypt this, so only the direction check can reject it.
+  await assert.rejects(
+    openParsed(await aesKey(asS2cKey(raw)), parsed, DIR_S2C),
+    (e: unknown) => e instanceof WakeError && e.code === "bad_request",
+  );
 });

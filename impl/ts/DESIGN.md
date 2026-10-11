@@ -52,7 +52,7 @@
 ### 2.6 仕様の構成要素は1か所に置く
 - ラベルは `spec/labels.ts` の `LABELS` にだけ書きます。
 - ラベル付きの LP は `labeled`、ラベルの照合は `expectLabel`、上限オプションの検査は `checkMaxLength` で、それぞれ1か所にまとめています。
-- `seal` と testing の `sealWithIv` は、処理の本体（`sealWithHeader`）を共有します。
+- `seal` と testing の `sealWithIv` は、処理の本体（`sealWithHeaderAnyKey`）を共有します。公開の `seal` / `sealWithHeader` は鍵の役割と `dir` の組み合わせを型で確かめ、本体に渡します。
 
 ### 2.7 公開する範囲は狭くする
 - core の `index.ts` が公開するのは、WAKE の API、ブランド型、`LABELS`、`WakeError`、`Bytes`、鍵のインポート（`aesKey` / `hmacKey`）とその鍵型だけです。汎用の関数は再エクスポートしません。使う側が各パッケージから直接 import します。
