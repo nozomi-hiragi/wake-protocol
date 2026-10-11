@@ -9,8 +9,8 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc -p packages/core",
-    "test": "npm test -w @wake-protocol/core",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces",
     "vectors": "npm run vectors -w @wake-protocol/core"
   },
   "devDependencies": {

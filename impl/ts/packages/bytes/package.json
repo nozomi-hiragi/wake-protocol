@@ -1,0 +1,14 @@
+{
+  "name": "@wake-protocol/bytes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {}
+}
