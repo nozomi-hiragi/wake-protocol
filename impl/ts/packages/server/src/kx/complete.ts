@@ -229,6 +229,13 @@ async function commitLogin(
     }
     throw new WakeError("auth_failed");
   }
+  // With app status changes first and revocation second, either login interleaving revokes the session.
+  // Check before counter updates so an update failure cannot skip revocation.
+  const currentCredential = await options.credentials.getCredential(credential.credentialId);
+  if (!currentCredential || currentCredential.status !== "active") {
+    await options.store.revokeSessionsByCredential(credential.credentialId);
+    throw new WakeError("auth_failed");
+  }
   if (update) {
     await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
   }

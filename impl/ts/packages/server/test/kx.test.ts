@@ -112,6 +112,50 @@ test(
 );
 
 for (const backupEligible of [false, true]) {
+  for (const status of ["suspended", "deleted"] as const) {
+    test(`KX revokes a session when the credential becomes ${status} before commit (BE=${backupEligible})`, async () => {
+      const f = await fixture({}, { rpId: "example.com", origin: "https://example.com", userId: "u1", backupEligible });
+      const p = await prepare(f, { signCount: 1 });
+      const credentialId = f.auth.credential.credentialId;
+      const lookup = f.credentials.getCredential.bind(f.credentials);
+      let deleted = false;
+      let nullLookups = 0;
+      f.credentials.getCredential = async id => {
+        if (deleted) {
+          nullLookups++;
+          return null;
+        }
+        return lookup(id);
+      };
+      let counterUpdates = 0;
+      f.credentials.updateSignCount = async () => {
+        counterUpdates++;
+        throw new Error("revocation must precede deferred counter updates");
+      };
+      const commit = f.store.commitLogin.bind(f.store);
+      f.store.commitLogin = async value => {
+        const credential = await lookup(credentialId);
+        assert.ok(credential);
+        assert.equal(credential.status, "active");
+        assert.equal(credential.signCount, backupEligible ? 0 : 1);
+        f.credentials.setCredential({ ...credential, status }, "alice");
+        deleted = status === "deleted";
+        await f.store.revokeSessionsByCredential(credentialId);
+        assert.equal(await f.store.getSession(p.sessionId.toUint8Array()), null);
+        const committed = await commit(value);
+        assert.equal(committed, true);
+        assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "ACTIVE");
+        return committed;
+      };
+      await expectError(await jsonRequest(f.server, "/auth/complete", p.body), 401, "auth_failed");
+      assert.equal((await f.store.getSession(p.sessionId.toUint8Array()))?.status, "REVOKED");
+      assert.equal(nullLookups, status === "deleted" ? 1 : 0);
+      assert.equal(counterUpdates, 0);
+    });
+  }
+}
+
+for (const backupEligible of [false, true]) {
   test(
     `concurrent completions return identical cached bytes for ${backupEligible ? "BE=true" : "0/0 counters"}`,
     async () => {
