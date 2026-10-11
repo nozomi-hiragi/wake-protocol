@@ -30,9 +30,12 @@ interface PendingRegistration {
 
 const REGISTRATION_TTL_MS = 300_000;
 const MAX_BODY = 65_536;
+const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const FILES = new URL("../", import.meta.url);
 
 class BadRequest extends Error {}
+
+class Conflict extends Error {}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -61,13 +64,13 @@ function same(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 async function readJson(c: Context): Promise<Record<string, unknown>> {
-  const text = await c.req.text();
-  if (text.length > MAX_BODY) {
+  const raw = new Uint8Array(await c.req.arrayBuffer());
+  if (raw.length > MAX_BODY) {
     throw new BadRequest();
   }
   let value: unknown;
   try {
-    value = parseIJson(text);
+    value = parseIJson(bytesToUtf8(raw));
   } catch (e) {
     if (e instanceof SyntaxError || e instanceof RangeError || e instanceof TypeError) {
       throw new BadRequest();
@@ -78,6 +81,33 @@ async function readJson(c: Context): Promise<Record<string, unknown>> {
     throw new BadRequest();
   }
   return value;
+}
+
+function contains(haystack: Uint8Array, needle: number[]): boolean {
+  for (let i = 0; i + needle.length <= haystack.length; i++) {
+    if (needle.every((byte, j) => haystack[i + j] === byte)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Byte-pattern check, NOT a CBOR parse: the attested COSE_Key must contain the exact encodings of the
+// EC2 / ES256 / P-256 parameters and of the x and y coordinates taken from the SPKI.
+function coseMatches(cose: Uint8Array, spki: Uint8Array): boolean {
+  const point = spki.subarray(spki.length - 65);
+  if (point[0] !== 0x04) {
+    return false;
+  }
+  const x = [...point.subarray(1, 33)];
+  const y = [...point.subarray(33, 65)];
+  return [
+    [0x01, 0x02],
+    [0x03, 0x26],
+    [0x20, 0x01],
+    [0x21, 0x58, 0x20, ...x],
+    [0x22, 0x58, 0x20, ...y],
+  ].every(pattern => contains(cose, pattern));
 }
 
 function username(body: Record<string, unknown>): string {
@@ -140,6 +170,9 @@ async function verifyRegistration(
   } catch {
     throw new BadRequest();
   }
+  if (!coseMatches(authData.subarray(55 + idLength), publicKey)) {
+    throw new BadRequest();
+  }
   const transports = Array.isArray(response.transports) && response.transports.every(t => typeof t === "string") ?
     response.transports as string[] :
     undefined;
@@ -169,10 +202,22 @@ export function createDemoApp(options: DemoAppOptions): DemoApp {
   });
   const pending = new Map<string, PendingRegistration>();
   const app = new Hono();
+  const host = new URL(options.origin).host;
+
+  app.use("*", async (c, next) => {
+    if (new URL(c.req.url).host !== host) {
+      return c.json({ error: "bad_host" }, 421, { "Content-Security-Policy": CSP });
+    }
+    await next();
+    c.res.headers.set("Content-Security-Policy", CSP);
+  });
 
   app.onError((e, c) => {
     if (e instanceof BadRequest) {
       return c.json({ error: "bad_request" }, 400);
+    }
+    if (e instanceof Conflict) {
+      return c.json({ error: e.message }, 409);
     }
     return c.json({ error: "internal" }, 500);
   });
@@ -184,6 +229,14 @@ export function createDemoApp(options: DemoAppOptions): DemoApp {
     const name = username(await readJson(c));
     if (await credentials.findUserByUsername(name)) {
       return c.json({ error: "username_taken" }, 409);
+    }
+    for (const [key, entry] of pending) {
+      if (now() >= entry.expiresAt) {
+        pending.delete(key);
+      }
+    }
+    if (pending.has(name)) {
+      return c.json({ error: "registration_pending" }, 409);
     }
     const challenge = randomBytes(32);
     const userId = randomBytes(16);
@@ -212,21 +265,30 @@ export function createDemoApp(options: DemoAppOptions): DemoApp {
       return c.json({ error: "username_taken" }, 409);
     }
     const verified = await verifyRegistration(field(body, "credential"), entry, options);
-    credentials.setCredential({
-      credentialId: verified.rawId,
-      userId: base64urlnopad.encode(entry.userId),
-      userHandle: entry.userId,
-      publicKey: verified.publicKey,
-      algorithm: -7,
-      signCount: verified.signCount,
-      backupEligible: verified.backupEligible,
-      status: "active",
-      ...(verified.transports ? { transports: verified.transports } : {}),
-    }, name);
+    if (await credentials.getCredential(verified.rawId)) {
+      throw new Conflict("credential_exists");
+    }
+    try {
+      credentials.setCredential({
+        credentialId: verified.rawId,
+        userId: base64urlnopad.encode(entry.userId),
+        userHandle: entry.userId,
+        publicKey: verified.publicKey,
+        algorithm: -7,
+        signCount: verified.signCount,
+        backupEligible: verified.backupEligible,
+        status: "active",
+        ...(verified.transports ? { transports: verified.transports } : {}),
+      }, name);
+    } catch {
+      // The store refuses to re-bind a credential id or username to another user.
+      throw new Conflict("credential_exists");
+    }
     return c.json({ ok: true });
   });
 
   app.get("/", () => file("public/index.html", "text/html; charset=utf-8"));
+  app.get("/app.css", () => file("public/app.css", "text/css; charset=utf-8"));
   app.get("/app.js", () => file("dist/app.js", "text/javascript; charset=utf-8"));
 
   return { app, server, credentials, store };

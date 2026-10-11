@@ -16,8 +16,6 @@ const allowedEdges: Record<string, readonly string[]> = {
   "@wake-protocol/demo": [
     "@wake-protocol/server",
     "@wake-protocol/client",
-    "@wake-protocol/core",
-    "@wake-protocol/bytes",
     "@wake-protocol/codec",
     "@wake-protocol/crypto",
     "@scure/base",

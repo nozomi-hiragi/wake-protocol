@@ -14,8 +14,6 @@
   "dependencies": {
     "@wake-protocol/server": "0.0.0",
     "@wake-protocol/client": "0.0.0",
-    "@wake-protocol/core": "0.0.0",
-    "@wake-protocol/bytes": "0.0.0",
     "@wake-protocol/codec": "0.0.0",
     "@wake-protocol/crypto": "0.0.0",
     "@scure/base": "2.4.0",

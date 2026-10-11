@@ -21,11 +21,11 @@ interface Clock {
 
 type Handler = (req: Request) => Promise<Response | null>;
 
-async function setup(wrap?: (handle: Handler) => Handler) {
+async function setup(wrap?: (handle: Handler) => Handler, clientOffsetMs = 0) {
   const auth = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
   const credentials = new MemoryCredentialStore();
   credentials.setCredential(auth.credential, "alice");
-  const clock: Clock = { client: 1_000_000, server: 1_000_000 };
+  const clock: Clock = { client: 1_000_000 + clientOffsetMs, server: 1_000_000 };
   const server = createWakeServer({
     rpId: RP,
     loginOrigins: [ORIGIN],
@@ -238,3 +238,30 @@ test("the Hono demo app serves registration and WAKE routes", async () => {
   const wrongMethod = await demo.app.fetch(new Request(`${ORIGIN}/auth/start`));
   assert.equal(wrongMethod.status, 405);
 });
+
+for (const offset of [600_000, -600_000]) {
+  test(`client clock ${offset > 0 ? "+" : "-"}10 minutes off: login, session and a lost /auth/complete response`, async () => {
+    let dropped = false;
+    const bodies: string[] = [];
+    const f = await setup(handle => async (req) => {
+      if (new URL(req.url).pathname !== "/auth/complete") {
+        return handle(req);
+      }
+      bodies.push(await req.clone().text());
+      const response = await handle(req);
+      if (!dropped) {
+        dropped = true;
+        throw new TypeError("network error");
+      }
+      return response;
+    }, offset);
+    const login = await f.client.login({ mode: "discoverable" });
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0], bodies[1]);
+    const session = await f.client.session();
+    assert.equal(session.sessionId, login.sessionId);
+    assert.equal(session.serverTime, f.clock.server);
+    // The offset learned at login keeps requests fresh: a single transmission.
+    assert.equal(f.calls.filter(path => path === "/wake/up").length, 1);
+  });
+}

@@ -17,8 +17,10 @@ interface Tamper {
   rpId?: string;
   flags?: number;
   alg?: number;
-  spki?: Uint8Array;
+  spki?: Uint8Array | "other";
   rawIdSwap?: boolean;
+  rawId?: Uint8Array;
+  coseSpki?: Uint8Array | "other";
   cutAuthData?: boolean;
   clientDataJSON?: string;
 }
@@ -36,8 +38,14 @@ async function newKey() {
   return { pair, spki: new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)) };
 }
 
-async function credentialFor(options: { challenge: string; }, key: Awaited<ReturnType<typeof newKey>>, tamper: Tamper = {}) {
-  const rawId = crypto.getRandomValues(new Uint8Array(32));
+async function credentialFor(options: { challenge: string; }, key: Awaited<ReturnType<typeof newKey>>, input: Tamper = {}) {
+  const other = input.spki === "other" || input.coseSpki === "other" ? (await newKey()).spki : undefined;
+  const tamper = {
+    ...input,
+    spki: input.spki === "other" ? other : input.spki,
+    coseSpki: input.coseSpki === "other" ? other : input.coseSpki,
+  };
+  const rawId = tamper.rawId ?? crypto.getRandomValues(new Uint8Array(32));
   const clientData = tamper.clientDataJSON ?? JSON.stringify({
     type: tamper.type ?? "webauthn.create",
     challenge: tamper.challenge ?? options.challenge,
@@ -49,7 +57,13 @@ async function credentialFor(options: { challenge: string; }, key: Awaited<Retur
   new DataView(header.buffer).setUint32(33, 0, false);
   header[53] = rawId.length >> 8;
   header[54] = rawId.length & 0xff;
-  const cose = new Uint8Array(77);
+  // Not a full CBOR encoding: map header plus the EC2 / ES256 / P-256 entries and the coordinates.
+  const point = (tamper.coseSpki ?? key.spki).slice(-64);
+  const cose = new Uint8Array([
+    0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01,
+    0x21, 0x58, 0x20, ...point.subarray(0, 32),
+    0x22, 0x58, 0x20, ...point.subarray(32),
+  ]);
   let authData = new Uint8Array([...header, ...(tamper.rawIdSwap ? crypto.getRandomValues(new Uint8Array(32)) : rawId), ...cose]);
   if (tamper.cutAuthData) {
     authData = authData.slice(0, 40);
@@ -124,6 +138,8 @@ const rejected: [string, Tamper][] = [
   ["wrong algorithm", { alg: -257 }],
   ["authData credential id differs from rawId", { rawIdSwap: true }],
   ["truncated authData", { cutAuthData: true }],
+  ["SPKI differs from the attested COSE_Key", { spki: "other" }],
+  ["COSE_Key coordinates differ from the SPKI", { coseSpki: "other" }],
   ["not a P-256 SPKI", { spki: new Uint8Array(91) }],
   ["duplicate JSON key in clientData", {
     clientDataJSON: `{"type":"webauthn.create","type":"webauthn.create","challenge":"x","origin":"${ORIGIN}"}`,
@@ -183,3 +199,81 @@ test("verify without options, or with a bad body, is a 400", async () => {
   assert.equal((await post(demo.app, "/register/options", '{"username":"a","username":"b"}')).status, 400);
 });
 
+
+test("a rawId that is already registered is rejected with 409 and the original credential is kept", async () => {
+  const first = await register({}, "alice");
+  const rawId = base64urlnopad.decode(first.credential.rawId);
+  const optionsResponse = await post(first.demo.app, "/register/options", { username: "mallory" });
+  const options = await optionsResponse.json() as { challenge: string; };
+  const credential = await credentialFor(options, await newKey(), { rawId });
+  const result = await post(first.demo.app, "/register/verify", { username: "mallory", credential });
+  assert.equal(result.status, 409);
+  assert.deepEqual(await result.json(), { error: "credential_exists" });
+  const stored = await first.demo.credentials.getCredential(rawId);
+  assert.equal(stored?.userId, (await first.demo.credentials.findUserByUsername("alice"))?.userId);
+  assert.equal(await first.demo.credentials.findUserByUsername("mallory"), null);
+});
+
+test("a pending registration is not replaced, and an expired one is dropped", async () => {
+  const clock = { now: 1_000_000 };
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN, now: () => clock.now });
+  assert.equal((await post(demo.app, "/register/options", { username: "alice" })).status, 200);
+  const second = await post(demo.app, "/register/options", { username: "alice" });
+  assert.equal(second.status, 409);
+  assert.deepEqual(await second.json(), { error: "registration_pending" });
+  clock.now += 299_999;
+  assert.equal((await post(demo.app, "/register/options", { username: "alice" })).status, 409);
+  clock.now += 1;
+  assert.equal((await post(demo.app, "/register/options", { username: "alice" })).status, 200);
+});
+
+test("requests for another Host are rejected with 421 on every route", async () => {
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN });
+  for (const [method, path] of [["GET", "/"], ["GET", "/app.js"], ["POST", "/register/options"], ["POST", "/auth/start"], ["POST", "/wake/up"]]) {
+    const response = await demo.app.fetch(new Request(`http://evil.example${path}`, { method }));
+    assert.equal(response.status, 421, path);
+  }
+  assert.equal((await demo.app.fetch(new Request(`${ORIGIN}/`))).status, 200);
+});
+
+test("every response carries the CSP header", async () => {
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN });
+  const csp = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+  for (const request of [
+    new Request(`${ORIGIN}/`),
+    new Request(`${ORIGIN}/app.css`),
+    new Request(`${ORIGIN}/missing`),
+    new Request(`${ORIGIN}/register/options`, { method: "POST", body: "{}" }),
+    new Request("http://evil.example/"),
+  ]) {
+    assert.equal((await demo.app.fetch(request)).headers.get("content-security-policy"), csp, request.url);
+  }
+});
+
+test("the page has no inline script or style", async () => {
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN });
+  const html = await (await demo.app.fetch(new Request(`${ORIGIN}/`))).text();
+  assert.doesNotMatch(html, /<style|<script(?![^>]*\bsrc=)| style=/);
+});
+
+test("the body limit counts bytes: 64 KiB passes the limit, 64 KiB + 1 is a 400", async () => {
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN });
+  const body = (bytes: number) => {
+    const prefix = '{"username":"a","pad":"';
+    const suffix = '"}';
+    return prefix + "x".repeat(bytes - prefix.length - suffix.length) + suffix;
+  };
+  assert.equal((await post(demo.app, "/register/options", body(65_536))).status, 200);
+  assert.equal((await post(demo.app, "/register/options", body(65_537))).status, 400);
+  // 3-byte characters: the character count is under the limit, the byte count is over.
+  const wide = '{"username":"b","pad":"' + "\u20ac".repeat(21_846) + '"}';
+  assert.ok(wide.length < 65_536 && new TextEncoder().encode(wide).length > 65_536);
+  assert.equal((await post(demo.app, "/register/options", wide)).status, 400);
+});
+
+test("a body that is not valid UTF-8 is a 400", async () => {
+  const demo = createDemoApp({ rpId: RP, origin: ORIGIN });
+  const bytes = new Uint8Array([...utf8ToBytes('{"username":"a","pad":"'), 0xff, ...utf8ToBytes('"}')]);
+  const response = await demo.app.fetch(new Request(`${ORIGIN}/register/options`, { method: "POST", body: bytes }));
+  assert.equal(response.status, 400);
+});
