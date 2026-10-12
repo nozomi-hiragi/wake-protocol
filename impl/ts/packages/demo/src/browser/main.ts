@@ -1,9 +1,8 @@
 // Browser entry for the demo: WakeClient with the platform authenticator.
 import { base64urlnopad } from "@scure/base";
-import { WakeClient, navigatorGetAssertion } from "@wake-protocol/client";
-import { action as bindAction, element } from "./common.ts";
+import { action as bindAction, createClient, element, trackSession } from "./common.ts";
 
-const client = new WakeClient({ baseUrl: "", getAssertion: navigatorGetAssertion });
+const { client, store } = createClient();
 
 const status = element("status");
 const output = element("session-output");
@@ -12,6 +11,8 @@ const contentInput = element<HTMLInputElement>("content");
 const operationIdInput = element<HTMLInputElement>("operation-id-input");
 const operationLink = element("operation-link");
 const operationOutput = element("operation-output");
+
+trackSession(client, store, () => {});
 
 function show(text: string): void {
   status.textContent = text;

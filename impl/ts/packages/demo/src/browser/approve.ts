@@ -1,9 +1,9 @@
 // Approve page (spec §10.11): verify the operation, show the exact hashInput, then approve, approve + rekey, or reject.
-import { WakeClient, navigatorGetAssertion, segmentHashInput } from "@wake-protocol/client";
-import type { VerifiedOperation } from "@wake-protocol/client";
-import { action, element } from "./common.ts";
+import { segmentHashInput } from "@wake-protocol/client";
+import type { StoredSessionInfo, VerifiedOperation } from "@wake-protocol/client";
+import { action, createClient, element, errorText, trackSession } from "./common.ts";
 
-const client = new WakeClient({ baseUrl: "", getAssertion: navigatorGetAssertion });
+const { client, store } = createClient();
 const status = element("status");
 const hashView = element("hash-input");
 const toggle = element<HTMLInputElement>("newline-toggle");
@@ -11,6 +11,8 @@ const buttons = ["approve", "approve-rekey", "reject"].map(id => element<HTMLBut
 const match = /^\/approve\/([0-9a-f]{64})$/u.exec(location.pathname);
 const operationId = match?.[1];
 let loaded: VerifiedOperation | undefined;
+let loading = false;
+let askedForLogin = false;
 
 function show(text: string): void {
   status.textContent = text;
@@ -75,10 +77,38 @@ async function load(): Promise<void> {
 
 toggle.addEventListener("change", render);
 
+// A session already in the shared store loads the operation; otherwise the page waits for a login.
+function onSession(info: StoredSessionInfo | undefined): void {
+  if (loaded !== undefined || loading) {
+    return;
+  }
+  if (info === undefined) {
+    if (!askedForLogin) {
+      askedForLogin = true;
+      show("log in to continue");
+    }
+    return;
+  }
+  loading = true;
+  void load().then(() => {
+    loading = false;
+  }, (e: unknown) => {
+    loading = false;
+    show(errorText(e));
+  });
+}
+
+trackSession(client, store, onSession);
+
 action("login-discoverable", status, async () => {
   const info = await client.login({ mode: "discoverable" });
   show(`logged in: epoch ${info.epoch}`);
   await load();
+});
+
+action("logout", status, async () => {
+  await client.logout();
+  show("logged out");
 });
 
 action("approve", status, async () => {

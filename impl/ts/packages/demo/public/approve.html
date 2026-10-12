@@ -8,9 +8,10 @@
 </head>
 <body>
 <h1>Approve an operation</h1>
-<p>Log in again on this page: the demo client keeps its session in memory only.</p>
+<p>This page uses the session shared by the demo's tabs. It asks for a login only when there is none.</p>
 <p>
   <button data-testid="login-discoverable" id="login-discoverable">Login (passkey)</button>
+  <button data-testid="logout" id="logout">Logout</button>
 </p>
 <h2>Operation</h2>
 <p>Operation ID: <code data-testid="operation-id" id="operation-id"></code></p>
@@ -26,6 +27,8 @@
 </p>
 <h2>Status</h2>
 <pre data-testid="status" id="status">idle</pre>
+<h2>Session</h2>
+<pre data-testid="session-state" id="session-state"></pre>
 <script type="module" src="/approve.js"></script>
 </body>
 </html>
