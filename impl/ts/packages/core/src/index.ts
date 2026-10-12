@@ -155,3 +155,4 @@ export {
   encodeEtRequest,
   encodeEtResponse,
 } from "./et/codec.ts";
+export { verifyApprovalBundle } from "./ta/bundle.ts";
