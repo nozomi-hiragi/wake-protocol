@@ -1,4 +1,4 @@
-// Spec §7.7–7.8, §8.2–8.9, §12: in-memory KX and SM client.
+// Spec §7.7–7.8, §8.2–8.9, §9, §12: in-memory KX, SM and KR client.
 import { base64urlnopad } from "@scure/base";
 import { Bytes } from "@wake-protocol/bytes";
 import { utf8ToBytes } from "@wake-protocol/codec";
@@ -17,6 +17,8 @@ import {
   ecdh,
   deriveKeys,
   loginTranscriptHash,
+  rekeyTranscriptHash,
+  krChallenge,
   kxChallenge,
   clientFinished,
   verifyServerFinished,
@@ -35,6 +37,8 @@ import type {
   FinishedCryptoKeyS,
   ClientFinishedMac,
   LoginTranscriptHash,
+  TranscriptHash,
+  RekeyTranscriptHash,
 } from "@wake-protocol/core";
 import type { GetAssertion, GetAssertionOptions } from "./assertion.ts";
 import { integer, object, responseJson } from "./json.ts";
@@ -63,16 +67,22 @@ export interface WakeSessionInfo extends SessionInfo {
   rekeyRecommended: boolean;
 }
 
-interface SessionState {
-  sessionId: SessionId;
+export type RekeyInfo = Omit<SessionInfo, "sessionId">;
+
+interface EpochState {
   epoch: number;
   c2s: C2sCryptoKey;
   s2c: S2cCryptoKey;
-  th: LoginTranscriptHash;
+  th: TranscriptHash;
+  encryptions: number;
+}
+
+interface SessionState {
+  sessionId: SessionId;
+  current: EpochState;
   offset: number;
   absoluteExpiresAt: number;
   idleTimeoutSec: number;
-  encryptions: number;
 }
 
 interface PreparedLogin {
@@ -88,6 +98,7 @@ interface PendingRequest {
   requestId: RequestId;
   context: string;
   wire: Bytes;
+  keys: EpochState;
 }
 
 interface ReceivedResponse {
@@ -129,7 +140,19 @@ async function parseStart(value: Record<string, unknown>) {
   if (expiresAt <= serverTime) {
     throw new WakeError("bad_request");
   }
-  const w = object(value.webauthn);
+  const webauthn = parseWebAuthn(value.webauthn);
+  return {
+    exchangeId,
+    sessionId,
+    serverNonce,
+    serverPublicKey,
+    ttl: expiresAt - serverTime,
+    webauthn,
+  };
+}
+
+function parseWebAuthn(value: unknown): Omit<GetAssertionOptions, "challenge"> {
+  const w = object(value);
   if (typeof w.rpId !== "string" || w.userVerification !== "required" || !Array.isArray(w.allowCredentials)) {
     throw new WakeError("bad_request");
   }
@@ -154,13 +177,32 @@ async function parseStart(value: Record<string, unknown>) {
     timeout: integer(w.timeout, 0xffffffff),
     allowCredentials,
   };
+  return webauthn;
+}
+
+async function parseRekeyStart(value: Record<string, unknown>, currentEpoch: number) {
+  const epoch = integer(value.epoch, 0xffffffff);
+  if (epoch !== currentEpoch + 1) {
+    throw new WakeError("bad_request");
+  }
+  const exchangeId = asExchangeId(decodeBase64urlField(value.exchangeId, "bad_request"));
+  const serverNonce = asServerNonce(decodeBase64urlField(value.serverNonce, "bad_request"));
+  let serverPublicKey;
+  try {
+    serverPublicKey = await parseEcPublicKey(decodeBase64urlField(value.serverPublicKey, "bad_request"));
+  } catch (e) {
+    if (e instanceof WakeError) {
+      throw new WakeError("bad_request");
+    }
+    throw e;
+  }
   return {
     exchangeId,
-    sessionId,
+    epoch,
     serverNonce,
     serverPublicKey,
-    ttl: expiresAt - serverTime,
-    webauthn,
+    expiresAt: integer(value.expiresAt),
+    webauthn: parseWebAuthn(value.webauthn),
   };
 }
 
@@ -171,7 +213,7 @@ type LoginRequest = { mode: "discoverable" } | {
   username: string;
 };
 
-function parseEncryptedError(plaintext: Uint8Array): string | undefined {
+function parseEncryptedError(plaintext: Uint8Array, reserved = false): string | undefined {
   let json: Record<string, unknown> | undefined;
   try {
     json = parseJsonObject(plaintext, "bad_request");
@@ -181,7 +223,7 @@ function parseEncryptedError(plaintext: Uint8Array): string | undefined {
     }
     // Generic application plaintext may be arbitrary binary, not JSON.
   }
-  if (json !== undefined && Object.keys(json).length === 1 && "error" in json) {
+  if (json !== undefined && (reserved || Object.keys(json).length === 1) && "error" in json) {
     const error = json.error;
     if (error !== null && typeof error === "object" && !Array.isArray(error) && "code" in error && typeof error.code === "string") {
       return error.code;
@@ -200,6 +242,7 @@ export class WakeClient {
   readonly #maxEncryptions: number;
   #state: SessionState | undefined;
   #generation = 0;
+  #rekeying = false;
 
   constructor(options: WakeClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -239,14 +282,16 @@ export class WakeClient {
     }
     this.#state = {
       sessionId: start.sessionId,
-      epoch: 0,
-      c2s: prepared.c2s,
-      s2c: prepared.s2c,
-      th: prepared.th,
+      current: {
+        epoch: 0,
+        c2s: prepared.c2s,
+        s2c: prepared.s2c,
+        th: prepared.th,
+        encryptions: 0,
+      },
       offset: info.serverTime - completed.arrivedAt,
       absoluteExpiresAt: info.absoluteExpiresAt,
       idleTimeoutSec: info.idleTimeoutSec,
-      encryptions: 0,
     };
     return info;
   }
@@ -381,6 +426,183 @@ export class WakeClient {
     return info;
   }
 
+  /** Only one rotation may run on this memory-only client (§9.7). */
+  async rekey(): Promise<RekeyInfo> {
+    if (this.#rekeying) {
+      throw new WakeError("conflict");
+    }
+    const state = this.#state;
+    if (!state) {
+      throw new WakeError("reauth");
+    }
+    const generation = this.#generation;
+    const previous = state.current;
+    this.#rekeying = true;
+    try {
+      const value = parseJsonObject(await this.#request("wake/kr/start", EMPTY_JSON), "bad_request");
+      this.#checkRotation(state, generation);
+      const start = await parseRekeyStart(value, previous.epoch);
+      const deadline = start.expiresAt - state.offset;
+      const prepared = await this.#prepareRotation(state, generation, previous, start);
+      const completed = await this.#completeRotation(state, generation, previous, prepared.keys, prepared.plaintext, deadline);
+      let info: RekeyInfo;
+      if (completed.recovered) {
+        info = completed.info;
+      } else {
+        try {
+          const json = parseJsonObject(completed.plaintext, "auth_failed");
+          info = {
+            epoch: integer(json.epoch, 0xffffffff, "auth_failed"),
+            serverTime: integer(json.serverTime, Number.MAX_SAFE_INTEGER, "auth_failed"),
+            absoluteExpiresAt: integer(json.absoluteExpiresAt, Number.MAX_SAFE_INTEGER, "auth_failed"),
+            idleTimeoutSec: integer(json.idleTimeoutSec, 0xffffffff, "auth_failed"),
+          };
+          const mac = decodeBase64urlField(json.serverFinished, "auth_failed");
+          if (info.epoch !== prepared.keys.epoch || mac.length !== 32 || !await verifyServerFinished(prepared.fkS, {
+            th: prepared.th,
+            clientFinished: prepared.finished,
+            ...info,
+          }, asServerFinishedMac(mac))) {
+            throw new WakeError("auth_failed");
+          }
+        } catch (e) {
+          if (this.#state === state) {
+            this.#state = undefined;
+          }
+          throw e;
+        }
+      }
+      this.#checkRotation(state, generation);
+      // Pending requests keep their own old keys. Ordinary sends now select only this generation.
+      state.current = prepared.keys;
+      state.offset = info.serverTime - completed.arrivedAt;
+      state.absoluteExpiresAt = info.absoluteExpiresAt;
+      state.idleTimeoutSec = info.idleTimeoutSec;
+      return info;
+    } finally {
+      this.#rekeying = false;
+    }
+  }
+
+  async #prepareRotation(
+    state: SessionState,
+    generation: number,
+    previous: EpochState,
+    start: Awaited<ReturnType<typeof parseRekeyStart>>,
+  ) {
+    // Ephemeral private key and raw derived keys leave scope before any transport retries.
+    const pair = await generateEphemeral(false);
+    const th: RekeyTranscriptHash = await rekeyTranscriptHash({
+      ...start,
+      sessionId: state.sessionId,
+      prevTh: previous.th,
+      clientPublicKey: pair.publicKey,
+    });
+    this.#checkRotation(state, generation);
+    const assertion = await this.#getAssertion({
+      ...start.webauthn,
+      challenge: (await krChallenge(th)).toUint8Array(),
+    });
+    this.#checkRotation(state, generation);
+    const raw = await deriveKeys(await ecdh(pair.privateKey, start.serverPublicKey), th);
+    const [c2s, s2c, fkC, fkS] = await Promise.all([
+      aesKey(raw.kC2s, false),
+      aesKey(raw.kS2c, false),
+      hmacKey(raw.fkC, false),
+      hmacKey(raw.fkS, false),
+    ]);
+    const keys: EpochState = { epoch: start.epoch, th, c2s, s2c, encryptions: 0 };
+    const finished = await clientFinished(fkC, th);
+    const plaintext = new Bytes(utf8ToBytes(JSON.stringify({
+      exchangeId: encodeBinary(start.exchangeId),
+      clientPublicKey: encodeBinary(pair.publicKey),
+      assertion,
+      clientFinished: encodeBinary(finished),
+    })));
+    return { keys, th, fkS, finished, plaintext };
+  }
+
+  #checkRotation(state: SessionState, generation: number): void {
+    if (this.#state !== state || generation !== this.#generation) {
+      throw new WakeError("auth_failed");
+    }
+  }
+
+  async #completeRotation(
+    state: SessionState,
+    generation: number,
+    previous: EpochState,
+    keys: EpochState,
+    plaintext: Bytes,
+    deadline: number,
+  ): Promise<
+    { recovered: false; plaintext: Uint8Array; arrivedAt: number } |
+    { recovered: true; info: WakeSessionInfo; arrivedAt: number }
+  > {
+    let delay = 100;
+    for (;;) {
+      this.#checkRotation(state, generation);
+      if (this.#now() >= deadline) {
+        throw new WakeError("expired");
+      }
+      const pending = await this.#sealRequest(state, "wake/kr/complete", plaintext, previous);
+      this.#checkRotation(state, generation);
+      // Only fetch/body failures are swallowed here. Cryptographic and protocol failures propagate.
+      const received = await this.#sendRequest(state, pending, true);
+      this.#checkRotation(state, generation);
+      if (received && !(received.response.status >= 500 && !isJsonResponse(received.response))) {
+        let result: Uint8Array | undefined;
+        try {
+          result = await this.#acceptResponse(state, pending, received);
+        } catch (e) {
+          if (e instanceof WakeError && e.code === "epoch_retired") {
+            return this.#recoverRotation(state, generation, keys);
+          }
+          if (!(e instanceof WakeError) || e.code !== "retry") {
+            throw e;
+          }
+        }
+        if (result !== undefined) {
+          const error = parseEncryptedError(result, true);
+          if (error !== undefined && error !== "stale_request") {
+            throw new WakeError(error);
+          }
+          if (error === undefined) {
+            return { recovered: false, plaintext: result, arrivedAt: received.arrivedAt };
+          }
+        }
+      }
+      const remaining = deadline - this.#now();
+      if (remaining <= 0) {
+        throw new WakeError("expired");
+      }
+      await this.#sleep(Math.min(delay, remaining));
+      delay = Math.min(delay * 2, 2000);
+    }
+  }
+
+  async #recoverRotation(state: SessionState, generation: number, keys: EpochState) {
+    try {
+      this.#checkRotation(state, generation);
+      const pending = await this.#sealRequest(state, "wake/session", new Bytes(EMPTY_JSON), keys);
+      this.#checkRotation(state, generation);
+      const received = await this.#sendRequest(state, pending, false);
+      const result = await this.#acceptResponse(state, pending, received!);
+      const error = parseEncryptedError(result, true);
+      if (error !== undefined) {
+        throw new WakeError(error);
+      }
+      const info = this.#parseSession(result, state, keys.epoch);
+      this.#checkRotation(state, generation);
+      return { recovered: true as const, info, arrivedAt: received!.arrivedAt };
+    } catch (e) {
+      if (this.#state === state) {
+        this.#state = undefined;
+      }
+      throw e;
+    }
+  }
+
   /** A stale_request is retried once; other network failures propagate. */
   async request(context: string, plaintext: Uint8Array): Promise<Uint8Array> {
     // §8.8: wake/ and wake- are reserved; wake/session and wake/logout use the private path.
@@ -403,7 +625,7 @@ export class WakeClient {
         return new Uint8Array(EMPTY_JSON);
       }
       const result = await this.#acceptResponse(state, pending, received);
-      const error = parseEncryptedError(result);
+      const error = parseEncryptedError(result, context.startsWith("wake/"));
       if (error === "stale_request" && attempt === 0) {
         continue;
       }
@@ -415,21 +637,21 @@ export class WakeClient {
     throw new WakeError("stale_request");
   }
 
-  async #sealRequest(state: SessionState, context: string, plaintext: Bytes): Promise<PendingRequest> {
+  async #sealRequest(state: SessionState, context: string, plaintext: Bytes, keys = state.current): Promise<PendingRequest> {
     if (this.#state !== state) {
       throw new WakeError("reauth");
     }
-    if (state.encryptions >= this.#maxEncryptions || this.#now() + state.offset >= state.absoluteExpiresAt) {
+    if (keys.encryptions >= this.#maxEncryptions || this.#now() + state.offset >= state.absoluteExpiresAt) {
       this.#state = undefined;
       throw new WakeError("reauth");
     }
     // Reserve synchronously before Web Crypto yields, including concurrent calls.
-    state.encryptions++;
+    keys.encryptions++;
     const requestId = newRequestId();
-    const wire = await seal(state.c2s, {
+    const wire = await seal(keys.c2s, {
       dir: DIR_C2S,
       sessionId: state.sessionId,
-      epoch: state.epoch,
+      epoch: keys.epoch,
       requestId,
       context,
       issuedAt: Math.max(0, Math.floor(this.#now() + state.offset)),
@@ -438,6 +660,7 @@ export class WakeClient {
       requestId,
       context,
       wire,
+      keys,
     };
   }
 
@@ -485,11 +708,11 @@ export class WakeClient {
     }
     const parsed = parseWire(received.bytes);
     const h = parsed.header;
-    if (h.dir !== DIR_S2C || !h.sessionId.equals(state.sessionId) || h.epoch !== state.epoch ||
+    if (h.dir !== DIR_S2C || !h.sessionId.equals(state.sessionId) || h.epoch !== pending.keys.epoch ||
         !h.requestId.equals(pending.requestId) || h.context !== pending.context) {
       throw new WakeError("bad_request");
     }
-    const result = (await openParsed(state.s2c, parsed, DIR_S2C)).toUint8Array();
+    const result = (await openParsed(pending.keys.s2c, parsed, DIR_S2C)).toUint8Array();
     if (this.#state !== state) {
       throw new WakeError("reauth");
     }
@@ -499,10 +722,18 @@ export class WakeClient {
 
   async session(): Promise<WakeSessionInfo> {
     const state = this.#state;
-    const value = parseJsonObject(await this.#request("wake/session", EMPTY_JSON), "bad_request");
+    const result = await this.#request("wake/session", EMPTY_JSON);
+    if (!state || this.#state !== state) {
+      throw new WakeError("reauth");
+    }
+    return this.#parseSession(result, state, state.current.epoch);
+  }
+
+  #parseSession(result: Uint8Array, state: SessionState, expectedEpoch: number): WakeSessionInfo {
+    const value = parseJsonObject(result, "bad_request");
     const id = asSessionId(decodeBase64urlField(value.sessionId, "bad_request"));
     const epoch = integer(value.epoch, 0xffffffff);
-    if (!state || !id.equals(state.sessionId) || epoch !== state.epoch || typeof value.rekeyRecommended !== "boolean") {
+    if (!id.equals(state.sessionId) || epoch !== expectedEpoch || typeof value.rekeyRecommended !== "boolean") {
       throw new WakeError("bad_request");
     }
     return {
