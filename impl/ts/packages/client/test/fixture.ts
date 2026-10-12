@@ -7,6 +7,8 @@ import {
   aesKey,
   asExchangeId,
   asClientFinishedMac,
+  decodeEtRequest,
+  encodeEtResponse,
   deriveKeys,
   ecdh,
   generateEphemeral,
@@ -36,7 +38,7 @@ import {
   DIR_C2S,
   DIR_S2C,
 } from "@wake-protocol/core";
-import type { C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
+import type { EtRequest, C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
 import type { GetAssertion, GetAssertionOptions, WakeClientOptions } from "../src/index.ts";
 
@@ -119,6 +121,9 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     taKrResult: undefined as "conflict" | "expired" | undefined,
     taApproveMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
     taApproveKrMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
+    paths: [] as string[],
+    etRequests: [] as EtRequest[],
+    etHandler: undefined as ((request: EtRequest) => Uint8Array) | undefined,
     upResponse: undefined as ((header: MsgHeader, response: Response) => Response | Promise<Response>) | undefined,
     upPlaintext: undefined as ((header: MsgHeader, plaintext: Uint8Array) => Uint8Array) | undefined,
     upAction: undefined as (() => Response | undefined) | undefined,
@@ -369,7 +374,8 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
       f.completeMutate?.(value);
       return f.completeResponse?.(value) ?? jsonResponse(value);
     }
-    assert.equal(path, "/wake/up");
+    assert.ok(path === "/wake/up" || path === "/wake/transport");
+    f.paths.push(path);
     assert.equal(contentType, "application/wake");
     const rawWire = init!.body as Uint8Array;
     f.wires.push(rawWire);
@@ -415,6 +421,13 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
           f.krCompleteMutate?.(value);
           plaintext = utf8ToBytes(JSON.stringify(value));
         }
+      } else if (p.header.context === "wake-et") {
+        assert.equal(path, "/wake/transport");
+        const etRequest = decodeEtRequest(request.toUint8Array());
+        f.etRequests.push(etRequest);
+        plaintext = f.etHandler
+          ? f.etHandler(etRequest)
+          : encodeEtResponse({ status: 200, headers: [], body: new Bytes(new Uint8Array(0)) }).toUint8Array();
       } else if (p.header.context.startsWith("wake/ta/")) {
         plaintext = await handleTa(p.header.context, request.toUint8Array());
       } else if (p.header.context === "wake/session") {

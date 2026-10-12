@@ -31,11 +31,15 @@ import {
   newRequestId,
   seal,
   parseWire,
+  encodeEtRequest,
+  decodeEtResponse,
   openParsed,
   DIR_C2S,
   DIR_S2C,
 } from "@wake-protocol/core";
 import type {
+  EtHeader,
+  EtMethod,
   SessionId,
   RequestId,
   C2sCryptoKey,
@@ -253,6 +257,14 @@ type LoginRequest = { mode: "discoverable" } | {
   mode: "username";
   username: string;
 };
+
+export interface WakeFetchInit {
+  method?: EtMethod;
+  /** Query string without "?". If omitted, a "?query" suffix of the path is used. Passing both is an error. */
+  query?: string;
+  headers?: readonly (readonly [string, string])[] | Record<string, string>;
+  body?: Uint8Array | string;
+}
 
 function parseEncryptedError(plaintext: Uint8Array, reserved = false): string | undefined {
   let json: Record<string, unknown> | undefined;
@@ -671,7 +683,7 @@ export class WakeClient {
     return this.#request(context, plaintext);
   }
 
-  async #request(context: string, plaintext: Uint8Array, ignoreTransportFailure = false): Promise<Uint8Array> {
+  async #request(context: string, plaintext: Uint8Array, ignoreTransportFailure = false, endpoint = "/wake/up"): Promise<Uint8Array> {
     const state = this.#state;
     if (!state) {
       throw new WakeError("reauth");
@@ -679,7 +691,7 @@ export class WakeClient {
     const bytes = new Bytes(plaintext);
     for (let attempt = 0; attempt < 2; attempt++) {
       const pending = await this.#sealRequest(state, context, bytes);
-      const received = await this.#sendRequest(state, pending, ignoreTransportFailure);
+      const received = await this.#sendRequest(state, pending, ignoreTransportFailure, endpoint);
       if (!received) {
         return new Uint8Array(EMPTY_JSON);
       }
@@ -694,6 +706,42 @@ export class WakeClient {
       return result;
     }
     throw new WakeError("stale_request");
+  }
+
+  /**
+   * §11 WAKE-ET: sends one HTTP-like request through POST /wake/transport and returns the tunnelled response.
+   * `path` may carry a query as "path?query"; it is split at the first "?" (an empty query after "?" is allowed).
+   * Validation errors are thrown before anything is sent. A string body is UTF-8 encoded. Routing errors from the
+   * server arrive as ordinary EtResponses (e.g. 404) and are returned, not thrown.
+   */
+  async wakeFetch(path: string, init: WakeFetchInit = {}): Promise<Response> {
+    const split = path.indexOf("?");
+    const rawPath = split < 0 ? path : path.slice(0, split);
+    const query = init.query ?? (split < 0 ? "" : path.slice(split + 1));
+    if (init.query !== undefined && split >= 0) {
+      throw new WakeError("invalid_path");
+    }
+    const headers: EtHeader[] = init.headers === undefined ? [] : Array.isArray(init.headers)
+      ? (init.headers as readonly EtHeader[]).map(([n, v]) => [n, v] as const)
+      : Object.entries(init.headers as Record<string, string>);
+    const body = typeof init.body === "string" ? utf8ToBytes(init.body) : init.body ?? new Uint8Array(0);
+    const encoded = encodeEtRequest({
+      method: init.method ?? "GET",
+      path: rawPath,
+      query,
+      headers,
+      body: new Bytes(body),
+    });
+    const result = await this.#request("wake-et", encoded.toUint8Array(), false, "/wake/transport");
+    const et = decodeEtResponse(result);
+    const out = new Headers();
+    for (const [name, value] of et.headers) {
+      out.append(name, value);
+    }
+    return new Response(et.body.length === 0 || et.status === 204 || et.status === 304 ? null : new Uint8Array(et.body.toUint8Array()), {
+      status: et.status,
+      headers: out,
+    });
   }
 
   async #sealRequest(state: SessionState, context: string, plaintext: Bytes, keys = state.current): Promise<PendingRequest> {
@@ -723,13 +771,13 @@ export class WakeClient {
     };
   }
 
-  async #sendRequest(state: SessionState, pending: PendingRequest, ignoreTransportFailure: boolean) {
+  async #sendRequest(state: SessionState, pending: PendingRequest, ignoreTransportFailure: boolean, endpoint = "/wake/up") {
     if (this.#state !== state) {
       throw new WakeError("reauth");
     }
     let response: Response;
     try {
-      response = await this.#post("/wake/up", new Uint8Array(pending.wire.toUint8Array()), "application/wake");
+      response = await this.#post(endpoint, new Uint8Array(pending.wire.toUint8Array()), "application/wake");
     } catch (e) {
       if (ignoreTransportFailure) {
         return undefined;
