@@ -14,6 +14,7 @@ import type {
   OperationQuery,
   OperationRecord,
   ExchangeRecord,
+  EpochKeys,
   LoginCommit,
   RekeyStart,
   RekeyCommit,
@@ -88,13 +89,17 @@ function operationView(o: OperationRecord, now: number): OperationRecord {
   return view;
 }
 
+function cloneEpochKeys(keys: EpochKeys): EpochKeys {
+  return { ...keys, credentialId: keys.credentialId.slice() };
+}
+
 function cloneSession(s: SessionRecord): SessionRecord {
   return {
     ...s,
     loginCredentialId: s.loginCredentialId.slice(),
     lastAuthCredentialId: s.lastAuthCredentialId.slice(),
-    ...(s.currentKeys ? { currentKeys: { ...s.currentKeys } } : {}),
-    ...(s.prevKeys ? { prevKeys: { ...s.prevKeys } } : {}),
+    ...(s.currentKeys ? { currentKeys: cloneEpochKeys(s.currentKeys) } : {}),
+    ...(s.prevKeys ? { prevKeys: cloneEpochKeys(s.prevKeys) } : {}),
   };
 }
 
@@ -403,7 +408,7 @@ export class MemoryWakeStore implements WakeStore {
     }
     s.prevKeys = s.currentKeys;
     s.prevValidUntil = c.now + c.epochGraceMs;
-    s.currentKeys = { ...c.currentKeys };
+    s.currentKeys = cloneEpochKeys(c.currentKeys);
     s.currentEpoch++;
     s.authTime = c.authTime;
     s.absoluteExpiresAt = Math.min(s.hardCapAt, c.absoluteExpiresAt);
