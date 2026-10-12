@@ -58,10 +58,10 @@ export const readJson = (text: string) => parseIJson(text) as Record<string, unk
 export const hasCode = (code: string) => (e: unknown) => e instanceof Error && "code" in e && e.code === code;
 
 export async function fixture(options: Partial<WakeClientOptions> = {}) {
-  const pair = await generateEphemeral();
-  const exchangeId = newExchangeId();
-  const sessionId = newSessionId();
-  const serverNonce = newServerNonce();
+  let pair = await generateEphemeral();
+  let exchangeId = newExchangeId();
+  let sessionId = newSessionId();
+  let serverNonce = newServerNonce();
   let c2s: C2sCryptoKey;
   let s2c: S2cCryptoKey;
   let currentTh: TranscriptHash;
@@ -141,6 +141,9 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     sleeps: [] as number[],
     client: undefined as unknown as WakeClient,
     addOperation: undefined as unknown as (content: string, nonce?: string) => Promise<{ hashInput: string; operationId: string }>,
+    newClient: undefined as unknown as (extra?: Partial<WakeClientOptions>) => WakeClient,
+    /** Points the next /auth/start and /auth/complete at a fresh session. Existing logins keep their old id. */
+    rotateLogin: undefined as unknown as () => Promise<void>,
   };
   const commitKr = async (
     exchange: { pair: typeof pair; nonce: typeof serverNonce; prevTh: TranscriptHash; epoch: number; response?: Record<string, unknown> },
@@ -492,7 +495,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     operations.set(identity.operationId, { content, nonce, status: "PENDING" });
     return identity;
   };
-  f.client = new WakeClient({
+  const clientOptions = (extra: Partial<WakeClientOptions> = {}): WakeClientOptions => ({
     baseUrl: "https://example.com/",
     getAssertion,
     fetch,
@@ -502,6 +505,19 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
       f.localTime += ms;
     },
     ...options,
+    ...extra,
   });
+  f.newClient = (extra) => new WakeClient(clientOptions(extra));
+  f.rotateLogin = async () => {
+    pair = await generateEphemeral();
+    exchangeId = newExchangeId();
+    sessionId = newSessionId();
+    serverNonce = newServerNonce();
+    f.start.exchangeId = encode(exchangeId);
+    f.start.sessionId = encode(sessionId);
+    f.start.serverNonce = encode(serverNonce);
+    f.start.serverPublicKey = encode(pair.publicKey);
+  };
+  f.client = f.newClient();
   return f;
 }

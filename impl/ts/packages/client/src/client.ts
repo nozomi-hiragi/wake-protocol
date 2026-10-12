@@ -1,4 +1,4 @@
-// Spec §7.7–7.8, §8.2–8.9, §9, §12: in-memory KX, SM and KR client.
+// Spec §7.7–7.8, §8.2–8.9, §8.11, §9, §12: KX, SM and KR client with a pluggable session store.
 import { base64urlnopad } from "@scure/base";
 import { Bytes } from "@wake-protocol/bytes";
 import { utf8ToBytes } from "@wake-protocol/codec";
@@ -8,6 +8,7 @@ import {
   parseJsonObject,
   asExchangeId,
   asSessionId,
+  asTranscriptHash,
   asServerNonce,
   asServerFinishedMac,
   aesKey,
@@ -58,6 +59,8 @@ import type {
 } from "@wake-protocol/core";
 import type { AuthenticationResponseJSON, GetAssertion, GetAssertionOptions } from "./assertion.ts";
 import { integer, object, responseJson } from "./json.ts";
+import { memorySessionStore } from "./store.ts";
+import type { SessionStore, StoredEpoch, StoredSession } from "./store.ts";
 import { OPERATION_STATUSES, parseOperationList, parseResult, verifiedOperation } from "./ta.ts";
 import type {
   OperationList,
@@ -79,6 +82,18 @@ export interface WakeClientOptions {
   etBodyLimit?: number;
   /** Positive safe integer plaintext limit; must cover ET request and response encoding. */
   maxPlaintext?: number;
+  /** Safe integer >= 1. Encryption quota is reserved in blocks of this size (§8.7). Defaults to 4096. */
+  encryptionBlockSize?: number;
+  /** Shared session record. Default: a private in-memory store, so instances do not share a login. */
+  store?: SessionStore;
+}
+
+/** What another tab needs in order to adopt a stored session without its keys. */
+export interface StoredSessionInfo {
+  sessionId: string;
+  epoch: number;
+  absoluteExpiresAt: number;
+  idleTimeoutSec: number;
 }
 
 export interface SessionInfo {
@@ -116,7 +131,10 @@ interface EpochState {
   c2s: C2sCryptoKey;
   s2c: S2cCryptoKey;
   th: TranscriptHash;
-  encryptions: number;
+  /** Remaining encryptions already reserved from the store. Zero means the next seal must reserve a block. */
+  budget: number;
+  /** One in-flight reservation shared by concurrent seals of this epoch (§8.7). */
+  reserving?: Promise<number>;
 }
 
 interface SessionState {
@@ -301,7 +319,10 @@ function parseEncryptedError(plaintext: Uint8Array, reserved = false): string | 
   return undefined;
 }
 
-/** Memory-only: a page reload requires a new WebAuthn login (§8.11). */
+/**
+ * Keys live in `options.store`. The default store is private to this instance, so a reload needs a new login.
+ * A shared store is how several tabs share one session (§8.11): call `reload` on focus, and after `epoch_retired`.
+ */
 export class WakeClient {
   readonly #baseUrl: string;
   readonly #getAssertion: GetAssertion;
@@ -309,11 +330,14 @@ export class WakeClient {
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #maxEncryptions: number;
+  readonly #blockSize: number;
+  readonly #store: SessionStore;
   readonly #etBodyLimit: number;
   readonly #maxPlaintext: number;
   #state: SessionState | undefined;
   #generation = 0;
-  #rekeying = false;
+  /** Rotation lock names this instance currently holds. Inner requests re-enter; a second rotation does not. */
+  #rotating = new Set<string>();
 
   constructor(options: WakeClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -326,6 +350,12 @@ export class WakeClient {
       throw new WakeError("invalid_option");
     }
     this.#maxEncryptions = limit;
+    const block = options.encryptionBlockSize ?? 4096;
+    if (!Number.isSafeInteger(block) || block < 1) {
+      throw new WakeError("invalid_option");
+    }
+    this.#blockSize = block;
+    this.#store = options.store ?? memorySessionStore();
     const bodyLimit = options.etBodyLimit === undefined ? ET_BODY_MAX : options.etBodyLimit;
     if (!Number.isSafeInteger(bodyLimit) || bodyLimit < ET_BODY_MIN) {
       throw new WakeError("invalid_option");
@@ -342,6 +372,111 @@ export class WakeClient {
 
   get loggedIn(): boolean {
     return this.#state !== undefined;
+  }
+
+  /** The session this instance has adopted. Undefined before `reload` adopts a record written by another tab. */
+  get currentSession(): StoredSessionInfo | undefined {
+    return this.#state === undefined ? undefined : this.#sessionInfo(this.#state);
+  }
+
+  /**
+   * Reads the store and merges it into this instance. Does not bump `#generation`, so a login
+   * whose passkey prompt is still open survives a focus reload.
+   * A newer epoch of the same session replaces `state.current` in place and keeps the local offset.
+   * If `#state` or its current epoch object changed during the read, that read is stale and is ignored.
+   */
+  async reload(): Promise<StoredSessionInfo | undefined> {
+    const before = this.#state;
+    const beforeCurrent = before?.current;
+    const record = await this.#store.load();
+    if (this.#state !== before || this.#state?.current !== beforeCurrent) {
+      return this.currentSession;
+    }
+    if (record === undefined || record.baseUrl !== this.#baseUrl) {
+      if (this.#state !== undefined) {
+        this.#state = undefined;
+      }
+      return undefined;
+    }
+    const state = this.#state;
+    if (state === undefined || encodeBinary(state.sessionId) !== record.sessionId) {
+      this.#state = {
+        sessionId: asSessionId(base64urlnopad.decode(record.sessionId)),
+        current: this.#restoreEpoch(record.current),
+        offset: record.offset,
+        absoluteExpiresAt: record.absoluteExpiresAt,
+        idleTimeoutSec: record.idleTimeoutSec,
+      };
+      return this.currentSession;
+    }
+    if (record.current.epoch > state.current.epoch) {
+      state.current = this.#restoreEpoch(record.current);
+      state.absoluteExpiresAt = record.absoluteExpiresAt;
+      state.idleTimeoutSec = record.idleTimeoutSec;
+    }
+    return this.#sessionInfo(state);
+  }
+
+  #sessionInfo(state: SessionState): StoredSessionInfo {
+    return {
+      sessionId: encodeBinary(state.sessionId),
+      epoch: state.current.epoch,
+      absoluteExpiresAt: state.absoluteExpiresAt,
+      idleTimeoutSec: state.idleTimeoutSec,
+    };
+  }
+
+  #storedEpoch(keys: EpochState): StoredEpoch {
+    return { epoch: keys.epoch, c2s: keys.c2s, s2c: keys.s2c, th: keys.th.toUint8Array() };
+  }
+
+  #restoreEpoch(stored: StoredEpoch): EpochState {
+    return {
+      epoch: stored.epoch,
+      c2s: stored.c2s,
+      s2c: stored.s2c,
+      th: asTranscriptHash(stored.th),
+      budget: 0,
+    };
+  }
+
+  #sessionRecord(state: SessionState, current: EpochState, pending?: EpochState): StoredSession {
+    const record: StoredSession = {
+      baseUrl: this.#baseUrl,
+      sessionId: encodeBinary(state.sessionId),
+      current: this.#storedEpoch(current),
+      offset: state.offset,
+      absoluteExpiresAt: state.absoluteExpiresAt,
+      idleTimeoutSec: state.idleTimeoutSec,
+    };
+    if (pending !== undefined) {
+      record.pending = this.#storedEpoch(pending);
+    }
+    return record;
+  }
+
+  /** Forgets the session locally and removes it from the store when it is still that session. */
+  async #drop(state: SessionState): Promise<void> {
+    if (this.#state === state) {
+      this.#state = undefined;
+    }
+    await this.#store.clear({ sessionId: encodeBinary(state.sessionId) });
+  }
+
+  /**
+   * Exclusive KR for this session (§9.7). A second call while one is running rejects with conflict.
+   * Requests made by the rotation itself re-enter instead of deadlocking on the same name.
+   */
+  async #withRotationLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const name = "wake-kr:" + sessionId;
+    return this.#store.lock(name, async () => {
+      this.#rotating.add(name);
+      try {
+        return await fn();
+      } finally {
+        this.#rotating.delete(name);
+      }
+    });
   }
 
   #post(path: string, body: string | Uint8Array<ArrayBuffer>, contentType: string): Promise<Response> {
@@ -363,6 +498,26 @@ export class WakeClient {
     if (generation !== this.#generation) {
       throw new WakeError("auth_failed");
     }
+    const offset = info.serverTime - completed.arrivedAt;
+    // A new login replaces whatever another tab had stored. No expect.
+    await this.#store.save({
+      baseUrl: this.#baseUrl,
+      sessionId: info.sessionId,
+      current: {
+        epoch: 0,
+        c2s: prepared.c2s,
+        s2c: prepared.s2c,
+        th: prepared.th.toUint8Array(),
+      },
+      offset,
+      absoluteExpiresAt: info.absoluteExpiresAt,
+      idleTimeoutSec: info.idleTimeoutSec,
+    });
+    if (generation !== this.#generation) {
+      // Logout or a newer login won while the record was written. Don't adopt it here.
+      await this.#store.clear({ sessionId: info.sessionId });
+      throw new WakeError("auth_failed");
+    }
     this.#state = {
       sessionId: start.sessionId,
       current: {
@@ -370,9 +525,9 @@ export class WakeClient {
         c2s: prepared.c2s,
         s2c: prepared.s2c,
         th: prepared.th,
-        encryptions: 0,
+        budget: 0,
       },
-      offset: info.serverTime - completed.arrivedAt,
+      offset,
       absoluteExpiresAt: info.absoluteExpiresAt,
       idleTimeoutSec: info.idleTimeoutSec,
     };
@@ -509,24 +664,29 @@ export class WakeClient {
     return info;
   }
 
-  /** Only one rotation may run on this memory-only client (§9.7). */
+  /** One rotation at a time for this session, across tabs (§9.7). */
   async rekey(): Promise<RekeyInfo> {
-    if (this.#rekeying) {
-      throw new WakeError("conflict");
-    }
     const state = this.#state;
     if (!state) {
       throw new WakeError("reauth");
     }
     const generation = this.#generation;
+    return this.#withRotationLock(encodeBinary(state.sessionId), () => this.#rekeyLocked(state, generation));
+  }
+
+  async #rekeyLocked(state: SessionState, generation: number): Promise<RekeyInfo> {
+    await this.reload();
+    this.#checkRotation(state, generation);
     const previous = state.current;
-    this.#rekeying = true;
+    const sessionId = encodeBinary(state.sessionId);
+    let committed = false;
     try {
       const value = parseJsonObject(await this.#request("wake/kr/start", EMPTY_JSON), "bad_request");
       this.#checkRotation(state, generation);
       const start = await parseRekeyStart(value, previous.epoch);
       const deadline = start.expiresAt - state.offset;
       const prepared = await this.#prepareRotation(state, generation, previous, start, async (th) => krChallenge(th));
+      await this.#savePending(state, generation, previous, prepared.keys);
       const plaintext = new Bytes(utf8ToBytes(JSON.stringify({
         exchangeId: encodeBinary(start.exchangeId),
         clientPublicKey: encodeBinary(prepared.clientPublicKey),
@@ -536,16 +696,20 @@ export class WakeClient {
       const completed = await this.#completeRotation(
         state, generation, previous, "wake/kr/complete", plaintext, deadline, prepared.keys,
       );
-      let info: RekeyInfo;
-      if (completed.recovered) {
-        info = completed.info;
-      } else {
-        info = await this.#verifyRotation(state, prepared, completed.plaintext);
-      }
-      this.#commitRotation(state, generation, prepared.keys, info);
+      const info = completed.recovered ? completed.info : await this.#verifyRotation(state, prepared, completed.plaintext);
+      await this.#commitRotation(state, generation, previous, prepared.keys, info);
+      committed = true;
       return info;
+    } catch (e) {
+      // §9.6: a conflict means another tab already moved the epoch. Adopt that record.
+      if (e instanceof WakeError && e.code === "conflict" && this.#state === state) {
+        await this.reload();
+      }
+      throw e;
     } finally {
-      this.#rekeying = false;
+      if (!committed) {
+        await this.#discardPending(sessionId, previous.epoch);
+      }
     }
   }
 
@@ -570,7 +734,7 @@ export class WakeClient {
       return info;
     } catch (e) {
       if (this.#state === state) {
-        this.#state = undefined;
+        await this.#drop(state);
       }
       throw e;
     }
@@ -580,12 +744,67 @@ export class WakeClient {
    * Pending requests keep their own old keys. Ordinary sends now select only this generation.
    * The clock offset stays as #acceptResponse set it from the accepted header (§8.5). A replayed
    * completion's plaintext serverTime is the original commit time (§9.4) and must not replace it.
+   * The store switches first, and only while it still names `previous`, so a lost race cannot roll the epoch back.
    */
-  #commitRotation(state: SessionState, generation: number, keys: EpochState, info: RekeyInfo): void {
+  async #commitRotation(
+    state: SessionState,
+    generation: number,
+    previous: EpochState,
+    keys: EpochState,
+    info: RekeyInfo,
+  ): Promise<void> {
     this.#checkRotation(state, generation);
+    const sessionId = encodeBinary(state.sessionId);
+    const wrote = await this.#store.save({
+      baseUrl: this.#baseUrl,
+      sessionId,
+      current: this.#storedEpoch(keys),
+      offset: state.offset,
+      absoluteExpiresAt: info.absoluteExpiresAt,
+      idleTimeoutSec: info.idleTimeoutSec,
+    }, { sessionId, epoch: previous.epoch });
+    if (!wrote) {
+      await this.reload();
+      this.#checkRotation(state, generation);
+      if (state.current.epoch >= keys.epoch) {
+        state.absoluteExpiresAt = info.absoluteExpiresAt;
+        state.idleTimeoutSec = info.idleTimeoutSec;
+        return;
+      }
+      throw new WakeError("conflict");
+    }
     state.current = keys;
     state.absoluteExpiresAt = info.absoluteExpiresAt;
     state.idleTimeoutSec = info.idleTimeoutSec;
+  }
+
+  /** Publishes the uncommitted next epoch before kr/complete or TA+KR approve leaves this tab. */
+  async #savePending(state: SessionState, generation: number, previous: EpochState, pending: EpochState): Promise<void> {
+    const wrote = await this.#store.save(
+      this.#sessionRecord(state, previous, pending),
+      { sessionId: encodeBinary(state.sessionId), epoch: previous.epoch },
+    );
+    if (!wrote) {
+      await this.reload();
+      this.#checkRotation(state, generation);
+      throw new WakeError("conflict");
+    }
+  }
+
+  /** Drops `pending` only while the stored current epoch is still the one this rotation started from. */
+  async #discardPending(sessionId: string, epoch: number): Promise<void> {
+    const record = await this.#store.load();
+    if (record === undefined || record.sessionId !== sessionId || record.current.epoch !== epoch || record.pending === undefined) {
+      return;
+    }
+    await this.#store.save({
+      baseUrl: record.baseUrl,
+      sessionId: record.sessionId,
+      current: record.current,
+      offset: record.offset,
+      absoluteExpiresAt: record.absoluteExpiresAt,
+      idleTimeoutSec: record.idleTimeoutSec,
+    }, { sessionId, epoch });
   }
 
   async #prepareRotation(
@@ -616,7 +835,7 @@ export class WakeClient {
       hmacKey(raw.fkC, false),
       hmacKey(raw.fkS, false),
     ]);
-    const keys: EpochState = { epoch: start.epoch, th, c2s, s2c, encryptions: 0 };
+    const keys: EpochState = { epoch: start.epoch, th, c2s, s2c, budget: 0 };
     const finished = await clientFinished(fkC, th);
     return { keys, th, fkS, finished, clientPublicKey: pair.publicKey, assertion };
   }
@@ -730,7 +949,7 @@ export class WakeClient {
       return { recovered: true as const, info };
     } catch (e) {
       if (this.#state === state) {
-        this.#state = undefined;
+        await this.#drop(state);
       }
       throw e;
     }
@@ -752,22 +971,152 @@ export class WakeClient {
     }
     const bytes = new Bytes(plaintext);
     for (let attempt = 0; attempt < 2; attempt++) {
-      const pending = await this.#sealRequest(state, context, bytes);
-      const received = await this.#sendRequest(state, pending, ignoreTransportFailure, endpoint);
-      if (!received) {
-        return new Uint8Array(EMPTY_JSON);
+      const outcome = await this.#sendOnce(state, context, bytes, endpoint, ignoreTransportFailure, true);
+      if (outcome === "stale") {
+        if (attempt === 0) {
+          continue;
+        }
+        throw new WakeError("stale_request");
       }
-      const result = await this.#acceptResponse(state, pending, received);
+      if (typeof outcome === "number") {
+        // The rejected request was not processed. Resend once under the epoch the store now has.
+        await this.#adoptRetiredEpoch(state, outcome);
+        const resent = await this.#sendOnce(state, context, bytes, endpoint, ignoreTransportFailure, false);
+        if (resent === "stale") {
+          throw new WakeError("stale_request");
+        }
+        if (typeof resent === "number") {
+          throw new WakeError("reauth");
+        }
+        return resent;
+      }
+      return outcome;
+    }
+    throw new WakeError("stale_request");
+  }
+
+  /** `adoptRetired` asks the caller to follow epoch_retired instead of dropping the session here. */
+  async #sendOnce(
+    state: SessionState,
+    context: string,
+    bytes: Bytes,
+    endpoint: string,
+    ignoreTransportFailure: boolean,
+    adoptRetired: boolean,
+  ): Promise<Uint8Array | "stale" | number> {
+    const pending = await this.#sealRequest(state, context, bytes);
+    const received = await this.#sendRequest(state, pending, ignoreTransportFailure, endpoint);
+    if (!received) {
+      return new Uint8Array(EMPTY_JSON);
+    }
+    try {
+      const result = await this.#acceptResponse(state, pending, received, false, adoptRetired);
       const error = parseEncryptedError(result, context.startsWith("wake/"));
-      if (error === "stale_request" && attempt === 0) {
-        continue;
+      if (error === "stale_request") {
+        return "stale";
       }
       if (error !== undefined) {
         throw new WakeError(error);
       }
       return result;
+    } catch (e) {
+      if (adoptRetired && e instanceof WakeError && e.code === "epoch_retired" && this.#state === state && pending.keys === state.current) {
+        return pending.keys.epoch;
+      }
+      throw e;
     }
-    throw new WakeError("stale_request");
+  }
+
+  /**
+   * An ordinary request sealed with the current epoch was rejected as epoch_retired (§8.6, §9.6).
+   * Prefer an epoch another tab already committed; otherwise probe this tab's pending generation.
+   */
+  async #adoptRetiredEpoch(state: SessionState, sealedEpoch: number): Promise<void> {
+    await this.reload();
+    if (this.#state !== state) {
+      throw new WakeError("reauth");
+    }
+    if (state.current.epoch > sealedEpoch) {
+      return;
+    }
+    const sessionId = encodeBinary(state.sessionId);
+    const record = await this.#store.load();
+    const pendingEpoch = sealedEpoch + 1;
+    if (record === undefined || record.baseUrl !== this.#baseUrl || record.sessionId !== sessionId
+        || record.pending === undefined || record.pending.epoch !== pendingEpoch) {
+      await this.#drop(state);
+      throw new WakeError("reauth");
+    }
+    const name = "wake-kr:" + sessionId;
+    let acquired = false;
+    try {
+      const probe = async () => {
+        await this.reload();
+        if (this.#state !== state) {
+          throw new WakeError("reauth");
+        }
+        if (state.current.epoch > sealedEpoch) {
+          return;
+        }
+        const fresh = await this.#store.load();
+        if (fresh === undefined || fresh.baseUrl !== this.#baseUrl || fresh.sessionId !== sessionId
+            || fresh.pending === undefined || fresh.pending.epoch !== pendingEpoch) {
+          await this.#drop(state);
+          throw new WakeError("reauth");
+        }
+        const keys = this.#restoreEpoch(fresh.pending);
+        const pending = await this.#sealRequest(state, "wake/session", new Bytes(EMPTY_JSON), keys);
+        const received = await this.#sendRequest(state, pending, false);
+        if (!received) {
+          throw new WakeError("reauth");
+        }
+        const result = await this.#acceptResponse(state, pending, received);
+        const error = parseEncryptedError(result, true);
+        if (error !== undefined) {
+          throw new WakeError(error);
+        }
+        const info = this.#parseSession(result, state, keys.epoch);
+        const wrote = await this.#store.save({
+          baseUrl: this.#baseUrl,
+          sessionId,
+          current: this.#storedEpoch(keys),
+          offset: state.offset,
+          absoluteExpiresAt: info.absoluteExpiresAt,
+          idleTimeoutSec: info.idleTimeoutSec,
+        }, { sessionId, epoch: sealedEpoch });
+        if (!wrote) {
+          await this.reload();
+          if (this.#state === state && state.current.epoch > sealedEpoch) {
+            return;
+          }
+          await this.#drop(state);
+          throw new WakeError("reauth");
+        }
+        state.current = keys;
+        state.absoluteExpiresAt = info.absoluteExpiresAt;
+        state.idleTimeoutSec = info.idleTimeoutSec;
+      };
+      if (this.#rotating.has(name)) {
+        await probe();
+        return;
+      }
+      await this.#store.lock(name, async () => {
+        acquired = true;
+        await probe();
+      });
+    } catch (e) {
+      // Another tab is finishing this rotation. Keep the session and surface the retirement.
+      if (!acquired && e instanceof WakeError && e.code === "conflict") {
+        throw new WakeError("epoch_retired");
+      }
+      if (this.#state === state) {
+        await this.#drop(state);
+      }
+      if (e instanceof WakeError && e.code === "reauth") {
+        throw e;
+      }
+      throw new WakeError("reauth");
+    }
   }
 
   /**
@@ -811,12 +1160,34 @@ export class WakeClient {
     if (this.#state !== state) {
       throw new WakeError("reauth");
     }
-    if (keys.encryptions >= this.#maxEncryptions || this.#now() + state.offset >= state.absoluteExpiresAt) {
-      this.#state = undefined;
+    if (this.#now() + state.offset >= state.absoluteExpiresAt) {
+      await this.#drop(state);
       throw new WakeError("reauth");
     }
-    // Reserve synchronously before Web Crypto yields, including concurrent calls.
-    keys.encryptions++;
+    // One shared reservation per epoch, then take a unit before Web Crypto yields.
+    while (keys.budget === 0) {
+      if (keys.reserving === undefined) {
+        const sessionId = encodeBinary(state.sessionId);
+        keys.reserving = this.#store.reserveEncryptions(sessionId, keys.epoch, this.#blockSize, this.#maxEncryptions)
+          .then((granted) => {
+            keys.budget += granted;
+            return granted;
+          })
+          .finally(() => {
+            keys.reserving = undefined;
+          });
+      }
+      const reserving = keys.reserving;
+      const granted = await reserving;
+      if (this.#state !== state) {
+        throw new WakeError("reauth");
+      }
+      if (granted === 0) {
+        await this.#drop(state);
+        throw new WakeError("reauth");
+      }
+    }
+    keys.budget--;
     const requestId = newRequestId();
     const wire = await seal(keys.c2s, {
       dir: DIR_C2S,
@@ -866,10 +1237,16 @@ export class WakeClient {
 
   /**
    * `keepOnRetired` is set only for a rotation completion, where an outer epoch_retired may mean the commit happened (§9.6).
-   * Otherwise epoch_retired for a request sealed with the CURRENT epoch means the server moved on and this memory-only
-   * client holds no other generation, so the session is dropped and reauthentication is required.
+   * `adoptRetired` is set for an ordinary request: epoch_retired on the current epoch is handed back so the caller can
+   * reload or probe a pending generation instead of dropping immediately. Every other current-epoch retirement still drops.
    */
-  async #acceptResponse(state: SessionState, pending: PendingRequest, received: ReceivedResponse, keepOnRetired = false): Promise<Uint8Array> {
+  async #acceptResponse(
+    state: SessionState,
+    pending: PendingRequest,
+    received: ReceivedResponse,
+    keepOnRetired = false,
+    adoptRetired = false,
+  ): Promise<Uint8Array> {
     if (received.response.status !== 200 || isJsonResponse(received.response)) {
       const json = parseJsonObject(received.bytes, "bad_request");
       const code = json.wakeError;
@@ -877,10 +1254,13 @@ export class WakeClient {
         throw new WakeError("bad_request");
       }
       if (code === "reauth" && this.#state === state) {
-        this.#state = undefined;
+        await this.#drop(state);
       }
       if (code === "epoch_retired" && !keepOnRetired && this.#state === state && pending.keys === state.current) {
-        this.#state = undefined;
+        if (adoptRetired) {
+          throw new WakeError("epoch_retired");
+        }
+        await this.#drop(state);
         throw new WakeError("reauth");
       }
       throw new WakeError(code);
@@ -979,12 +1359,28 @@ export class WakeClient {
     if (!state) {
       throw new WakeError("reauth");
     }
-    if (rekey && this.#rekeying) {
-      throw new WakeError("conflict");
-    }
     const generation = this.#generation;
+    const run = () => this.#approveBody(state, generation, id, operationIdHex, rekey);
+    if (!rekey) {
+      return run();
+    }
+    return this.#withRotationLock(encodeBinary(state.sessionId), run);
+  }
+
+  async #approveBody(
+    state: SessionState,
+    generation: number,
+    id: ReturnType<typeof parseOperationIdHex>,
+    operationIdHex: string,
+    rekey: boolean,
+  ): Promise<ApproveInfo> {
+    if (rekey) {
+      await this.reload();
+      this.#checkRotation(state, generation);
+    }
     const previous = state.current;
-    this.#rekeying ||= rekey;
+    const sessionId = encodeBinary(state.sessionId);
+    let committed = false;
     try {
       const c = await this.#taCall("wake/ta/challenge", { operationId: operationIdHex, rekey });
       this.#checkRotation(state, generation);
@@ -1009,6 +1405,7 @@ export class WakeClient {
         const start = { ...await parseRekeyKey(object(c.kr), previous.epoch), webauthn };
         exchangeId = start.exchangeId;
         prepared = await this.#prepareRotation(state, generation, previous, start, (th) => taKrChallenge(th, ta));
+        await this.#savePending(state, generation, previous, prepared.keys);
         assertion = prepared.assertion;
       } else {
         assertion = await this.#getAssertion({ ...webauthn, challenge: (await taChallenge(ta)).toUint8Array() });
@@ -1030,12 +1427,13 @@ export class WakeClient {
       );
       if (completed.recovered) {
         // The old epoch is retired, so the commit happened: adopt the epoch confirmed by wake/session under it.
-        this.#commitRotation(state, generation, prepared!.keys, completed.info);
+        await this.#commitRotation(state, generation, previous, prepared!.keys, completed.info);
+        committed = true;
         // Resend the same plaintext under the new epoch: the server replays the consumed attempt's stored result.
         const replay = await this.#request("wake/ta/approve", plaintext.toUint8Array());
         const { info, kr } = this.#parseApprove(replay, operationIdHex);
         if (kr === null || kr.result !== "committed") {
-          this.#state = undefined;
+          await this.#drop(state);
           throw new WakeError("bad_request");
         }
         const { epoch, serverTime, absoluteExpiresAt, idleTimeoutSec } = completed.info;
@@ -1043,17 +1441,26 @@ export class WakeClient {
         return info;
       }
       try {
-        return await this.#finishApprove(state, generation, operationIdHex, completed.plaintext, prepared);
+        const info = await this.#finishApprove(state, generation, previous, operationIdHex, completed.plaintext, prepared);
+        if (prepared !== undefined && info.kr?.result === "committed") {
+          committed = true;
+        }
+        return info;
       } catch (e) {
         // After a rekey request the server may have committed: an unreadable answer leaves the epoch unknown.
         if (prepared !== undefined && this.#state === state) {
-          this.#state = undefined;
+          await this.#drop(state);
         }
         throw e;
       }
+    } catch (e) {
+      if (e instanceof WakeError && e.code === "conflict" && this.#state === state) {
+        await this.reload();
+      }
+      throw e;
     } finally {
-      if (rekey) {
-        this.#rekeying = false;
+      if (rekey && !committed) {
+        await this.#discardPending(sessionId, previous.epoch);
       }
     }
   }
@@ -1061,6 +1468,7 @@ export class WakeClient {
   async #finishApprove(
     state: SessionState,
     generation: number,
+    previous: EpochState,
     operationIdHex: string,
     plaintext: Uint8Array,
     prepared: PreparedRotation | undefined,
@@ -1078,12 +1486,15 @@ export class WakeClient {
     const kr = krPart;
     const result = parseResult(kr.result, ["committed", "conflict", "expired"] as const);
     if (result !== "committed") {
-      // The pending generation is discarded; the current epoch stays.
+      // The pending generation is discarded by the caller. A conflict also adopts whatever epoch won (§9.6).
       info.kr = { result };
+      if (result === "conflict" && this.#state === state) {
+        await this.reload();
+      }
       return info;
     }
     const rekeyInfo = await this.#verifyRotation(state, prepared, kr);
-    this.#commitRotation(state, generation, prepared.keys, rekeyInfo);
+    await this.#commitRotation(state, generation, previous, prepared.keys, rekeyInfo);
     info.kr = { result, ...rekeyInfo };
     return info;
   }
@@ -1111,6 +1522,10 @@ export class WakeClient {
 
   /** Deletes local keys even on failure. Transport failures resolve; protocol errors propagate. */
   async logout(): Promise<void> {
+    // A tab that has not adopted the stored session yet can still revoke it.
+    if (this.#state === undefined) {
+      await this.reload();
+    }
     const state = this.#state;
     ++this.#generation;
     try {
@@ -1119,8 +1534,8 @@ export class WakeClient {
       }
       parseJsonObject(await this.#request("wake/logout", EMPTY_JSON, true), "bad_request");
     } finally {
-      if (this.#state === state) {
-        this.#state = undefined;
+      if (state) {
+        await this.#drop(state);
       }
     }
   }
