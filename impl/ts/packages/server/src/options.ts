@@ -1,5 +1,7 @@
 // Spec §6.3, §13: server configuration and validation.
-import { DEFAULT_MAX_PLAINTEXT, WakeError } from "@wake-protocol/core";
+import { DEFAULT_MAX_PLAINTEXT, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, WakeError } from "@wake-protocol/core";
+import { checkRoutes } from "./et/transport.ts";
+import type { EtRoute } from "./et/types.ts";
 import { MemoryWakeStore } from "./store/memory.ts";
 import type { CredentialStore, WakeStore } from "./store/types.ts";
 
@@ -32,6 +34,10 @@ export interface WakeServerOptions {
   idleTimeoutSec?: number;
   completedRetentionMs?: number;
   maxPlaintext?: number;
+  /** ET body limit (§11.2). With routes, maxPlaintext must cover the worst-case EtRequest for this limit. */
+  etBodyLimit?: number;
+  /** In-process WAKE-ET routes (§11.5); none by default. */
+  routes?: readonly EtRoute[];
   maxAuthBody?: number;
   /**
    * Set to the maximum number of credentials a user can have. Users above this count and real credential ID length
@@ -61,6 +67,7 @@ const defaults = {
   idleTimeoutSec: 86_400,
   completedRetentionMs: 600_000,
   maxPlaintext: DEFAULT_MAX_PLAINTEXT,
+  etBodyLimit: ET_BODY_MAX,
   maxAuthBody: 65_536,
   fakeCredentialCount: 1,
   fakeCredentialIdLength: 32,
@@ -147,6 +154,11 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
   ) {
     invalid();
   }
+  const routes = checkRoutes(options.routes);
+  // Routes enable ET: any EtRequest within the limits must fit in one message (§11.2, §8.1).
+  if (routes.length && values.maxPlaintext < ET_REQUEST_MAX_ENCODED - ET_BODY_MAX + values.etBodyLimit) {
+    invalid();
+  }
   if (options.store !== undefined && !hasMethods(options.store, [
     "createExchange",
     "getExchange",
@@ -181,6 +193,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     ...values,
     loginOrigins: [...options.loginOrigins],
     taOrigins: [...options.taOrigins ?? options.loginOrigins],
+    routes,
     secret: options.secret.slice(),
     store: options.store ?? new MemoryWakeStore(values.completedRetentionMs, { now: options.now ?? Date.now }),
     now: options.now ?? Date.now,
