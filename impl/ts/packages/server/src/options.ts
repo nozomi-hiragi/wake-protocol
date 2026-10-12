@@ -18,6 +18,7 @@ export interface WakeServerOptions {
   store?: WakeStore;
   now?: () => number;
   exchangeTtlMs?: number;
+  maxPendingRekeys?: number;
   webauthnTimeoutMs?: number;
   freshnessWindowMs?: number;
   epochGraceMs?: number;
@@ -43,6 +44,7 @@ export type ServerOptions = Required<Omit<WakeServerOptions, "onCounterAnomaly">
 
 const defaults = {
   exchangeTtlMs: 300_000,
+  maxPendingRekeys: 3,
   webauthnTimeoutMs: 270_000,
   freshnessWindowMs: 300_000,
   epochGraceMs: 60_000,
@@ -93,7 +95,9 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
   if (!(options.secret instanceof Uint8Array) || options.secret.length < 32) {
     invalid();
   }
-  if (!hasMethods(options.credentials, ["getCredential", "findUserByUsername", "compareAndSetSignCount", "updateSignCount"])) {
+  if (!hasMethods(options.credentials, [
+    "getCredential", "findUserByUsername", "findUserCredentials", "compareAndSetSignCount", "updateSignCount",
+  ])) {
     invalid();
   }
   if (options.now !== undefined && typeof options.now !== "function") {
@@ -119,6 +123,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     values.fakeCredentialIdLength < 16 ||
     values.fakeCredentialIdLength > 64 ||
     values.fakeCredentialCount > 16 ||
+    values.maxPendingRekeys > 16 ||
     values.retryAfterSec > 86_400 ||
     values.maxEncryptionsPerKey > 2 ** 28 ||
     values.maxPlaintext > 0xffffffff ||
@@ -130,6 +135,9 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     "createExchange",
     "getExchange",
     "commitLogin",
+    "createRekey",
+    "commitRekey",
+    "supersedeExchange",
     "clearSignCountUpdate",
     "getSession",
     "touchSession",

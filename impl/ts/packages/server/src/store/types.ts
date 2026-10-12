@@ -1,4 +1,4 @@
-// Spec §7.4–§7.6, §8.1, §8.10: atomic application store contracts.
+// Spec §7.4–§7.6, §8.1, §8.10, §9.4: atomic application store contracts.
 import type {
   C2sCryptoKey,
   S2cCryptoKey,
@@ -9,6 +9,8 @@ import type {
   EcPublicKey,
   ClientFinishedMac,
   LoginTranscriptHash,
+  RekeyTranscriptHash,
+  ApprovalId,
 } from "@wake-protocol/core";
 
 export interface WakeCredential {
@@ -26,6 +28,7 @@ export interface WakeCredential {
 
 export interface CredentialStore {
   getCredential(credentialId: Uint8Array): Promise<WakeCredential | null>;
+  findUserCredentials(userId: string): Promise<WakeCredential[]>;
   findUserByUsername(username: string): Promise<{ userId: string; credentials: WakeCredential[] } | null>;
   /** Atomically advances the counter only if it equals expected, across store instances. */
   compareAndSetSignCount(credentialId: Uint8Array, expected: number, next: number): Promise<boolean>;
@@ -65,7 +68,7 @@ export type ExchangeUser =
   | { mode: "discoverable"; }
   | { mode: "username"; requestedUserId: string | null; };
 
-/** Counter update that must be applied after the login commit; cleared once applied. */
+/** Counter update that must be applied after the authentication commit; cleared once applied. */
 export interface SignCountUpdate {
   credentialId: Uint8Array;
   userId: string;
@@ -85,7 +88,12 @@ interface ExchangeBase {
   serverPublicKey: EcPublicKey;
   serverPrivateKey?: CryptoKey;
   expiresAt: number;
-  th?: LoginTranscriptHash;
+  th?: TranscriptHash;
+  targetEpoch?: number;
+  prevTh?: TranscriptHash;
+  createdAt?: number;
+  boundApprovalId?: ApprovalId;
+  reauthenticatedCredentialId?: Uint8Array;
   clientFinished?: ClientFinishedMac;
   response?: string;
   signCountUpdate?: SignCountUpdate;
@@ -101,6 +109,32 @@ export interface LoginCommit {
   signCountUpdate?: SignCountUpdate;
 }
 
+export interface RekeyStart {
+  record: ExchangeRecord;
+  expectedEpoch: number;
+  now: number;
+  maxPendingRekeys: number;
+}
+
+export interface RekeyCommit {
+  exchangeId: Uint8Array;
+  sessionId: Uint8Array;
+  expectedEpoch: number;
+  now: number;
+  authTime: number;
+  th: RekeyTranscriptHash;
+  clientFinished: ClientFinishedMac;
+  response: string;
+  currentKeys: EpochKeys;
+  absoluteExpiresAt: number;
+  epochGraceMs: number;
+  credentialId: Uint8Array;
+  signCountUpdate?: SignCountUpdate;
+}
+
+export type RekeyStartResult = "created" | "conflict" | "reauth";
+export type RekeyCommitResult = "committed" | "conflict" | "expired" | "reauth";
+
 /**
  * All conditional methods must be atomic across store instances. Persistent stores
  * must protect keys with a separate KEK and AAD (§8.10):
@@ -110,6 +144,12 @@ export interface LoginCommit {
 export interface WakeStore {
   createExchange(record: ExchangeRecord): Promise<void>;
   getExchange(exchangeId: Uint8Array, now: number): Promise<ExchangeRecord | null>;
+  /** Checks session state, lifetime and epoch atomically with pending-limit eviction and insertion. */
+  createRekey(start: RekeyStart): Promise<RekeyStartResult>;
+  /** Checks exchange and session state/lifetime/epoch atomically with both writes. */
+  commitRekey(commit: RekeyCommit): Promise<RekeyCommitResult>;
+  /** Supersedes only a PENDING exchange and drops its private key. */
+  supersedeExchange(exchangeId: Uint8Array): Promise<void>;
   commitLogin(commit: LoginCommit): Promise<boolean>;
   /**
    * Clears the pending counter update of a committed exchange. Returns true only for the caller

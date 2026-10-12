@@ -2,6 +2,8 @@
 import { Bytes, DIR_C2S, DIR_S2C, openParsed, parseJsonObject, parseWire, seal, WakeError } from "@wake-protocol/core";
 import type { MsgHeader, ParsedWire } from "@wake-protocol/core";
 import { utf8ToBytes } from "@wake-protocol/codec";
+import { startRekey } from "../kr/start.ts";
+import { completeRekey } from "../kr/complete.ts";
 import { checkContentType, outerError, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
 import type { EpochKeys, SessionRecord } from "../store/types.ts";
@@ -107,6 +109,7 @@ async function dispatch(
   plaintext: Bytes,
   options: ServerOptions,
 ): Promise<DispatchResult | Response> {
+  const isRekey = header.context === "wake/kr/start" || header.context === "wake/kr/complete";
   try {
     const now = options.now();
     if (Math.abs(now - header.issuedAt) > options.freshnessWindowMs) {
@@ -114,13 +117,32 @@ async function dispatch(
     }
     // §8.5: stale requests cannot extend the idle timeout.
     await options.store.touchSession(header.sessionId.toUint8Array(), now);
-    if (header.context !== "wake/session" && header.context !== "wake/logout") {
+    if (!["wake/session", "wake/logout", "wake/kr/start", "wake/kr/complete"].includes(header.context)) {
       return { body: encryptedError("invalid_context"), logout: false };
     }
-    parseJsonObject(plaintext.toUint8Array(), "invalid_request");
+    const body = parseJsonObject(plaintext.toUint8Array(), "invalid_request");
+    if (isRekey) {
+      const session = await options.store.getSession(header.sessionId.toUint8Array());
+      if (!session || session.status !== "ACTIVE" || sessionExpired(session, options.now())) {
+        await options.store.expireSession(header.sessionId.toUint8Array(), options.now());
+        throw new WakeError("reauth");
+      }
+      const response = header.context === "wake/kr/start" ?
+        await startRekey(session, options) : await completeRekey(body, session, options);
+      return { body: response, logout: false };
+    }
     return await dispatchSession(header, options);
   } catch (e) {
-    const code = e instanceof WakeError && (e.code === "invalid_request" || e.code === "rate_limited") ? e.code : "internal";
+    if (
+      isRekey &&
+      e instanceof WakeError && (e.code === "reauth" || e.code === "retry")
+    ) {
+      return outerError(e.code, options.retryAfterSec);
+    }
+    const codes = isRekey ?
+      ["invalid_request", "rate_limited", "not_found", "expired", "webauthn_failed", "conflict"] :
+      ["invalid_request", "rate_limited"];
+    const code = e instanceof WakeError && codes.includes(e.code) ? e.code : "internal";
     return { body: encryptedError(code), logout: false };
   }
 }

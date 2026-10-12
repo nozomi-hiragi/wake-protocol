@@ -10,6 +10,10 @@ export type {
   SessionRecord,
   EpochKeys,
   LoginCommit,
+  RekeyStart,
+  RekeyCommit,
+  RekeyStartResult,
+  RekeyCommitResult,
   ExchangeUser,
   SignCountUpdate,
 } from "./store/types.ts";

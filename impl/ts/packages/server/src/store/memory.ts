@@ -1,10 +1,14 @@
-// Spec §7.4–§7.6, §8.1, §8.7–§8.10: process-memory atomic stores.
+// Spec §7.4–§7.6, §8.1, §8.7–§8.10, §9.4: process-memory atomic stores.
 import { base64urlnopad } from "@scure/base";
 import { sessionExpired } from "../sm/lifetime.ts";
 import type {
   CredentialStore,
   ExchangeRecord,
   LoginCommit,
+  RekeyStart,
+  RekeyCommit,
+  RekeyStartResult,
+  RekeyCommitResult,
   SessionRecord,
   SignCountUpdate,
   WakeCredential,
@@ -28,7 +32,11 @@ function cloneUpdate(u: SignCountUpdate): SignCountUpdate {
 }
 
 function cloneExchange(e: ExchangeRecord): ExchangeRecord {
-  return { ...e, ...(e.signCountUpdate ? { signCountUpdate: cloneUpdate(e.signCountUpdate) } : {}) };
+  return {
+    ...e,
+    ...(e.signCountUpdate ? { signCountUpdate: cloneUpdate(e.signCountUpdate) } : {}),
+    ...(e.reauthenticatedCredentialId ? { reauthenticatedCredentialId: e.reauthenticatedCredentialId.slice() } : {}),
+  };
 }
 
 function cloneSession(s: SessionRecord): SessionRecord {
@@ -85,6 +93,10 @@ export class MemoryCredentialStore implements CredentialStore {
     return c ? cloneCredential(c) : null;
   }
 
+  async findUserCredentials(userId: string): Promise<WakeCredential[]> {
+    return [...this.#credentials.values()].filter(c => c.userId === userId).map(cloneCredential);
+  }
+
   async findUserByUsername(username: string): Promise<{ userId: string; credentials: WakeCredential[] } | null> {
     const userId = this.#users.get(username);
     if (userId === undefined) {
@@ -108,7 +120,7 @@ export class MemoryCredentialStore implements CredentialStore {
   async updateSignCount(credentialId: Uint8Array, signCount: number): Promise<void> {
     const c = this.#credentials.get(id(credentialId));
     if (!c) {
-      throw new Error("credential disappeared during login");
+      throw new Error("credential disappeared during authentication");
     }
     c.signCount = Math.max(c.signCount, signCount);
   }
@@ -172,11 +184,7 @@ export class MemoryWakeStore implements WakeStore {
     if (this.#exchanges.has(key)) {
       throw new Error("duplicate exchangeId");
     }
-    const now = this.#clock();
-    if (now - this.#lastSweepAt >= this.#sweepInterval) {
-      this.#lastSweepAt = now;
-      this.#sweepAt(now);
-    }
+    this.#opportunisticSweep(this.#clock());
     this.#exchanges.set(key, cloneExchange(record));
     if (record.state === "PENDING") {
       const sessionKey = id(record.sessionId.toUint8Array());
@@ -236,6 +244,106 @@ export class MemoryWakeStore implements WakeStore {
     }
     this.#sessions.set(id(c.session.sessionId.toUint8Array()), cloneSession(c.session));
     return true;
+  }
+
+  #opportunisticSweep(now: number): void {
+    if (now - this.#lastSweepAt >= this.#sweepInterval) {
+      this.#lastSweepAt = now;
+      this.#sweepAt(now);
+    }
+  }
+
+  #activeSession(key: string, now: number): SessionRecord | null {
+    const s = this.#sessions.get(key);
+    if (!s || s.status !== "ACTIVE") {
+      return null;
+    }
+    if (sessionExpired(s, now)) {
+      this.#end(s, "EXPIRED", now);
+      this.#deleteKeys(s);
+      return null;
+    }
+    return s;
+  }
+
+  async createRekey(c: RekeyStart): Promise<RekeyStartResult> {
+    this.#opportunisticSweep(c.now);
+    const s = this.#activeSession(id(c.record.sessionId.toUint8Array()), c.now);
+    if (!s || !s.currentKeys) {
+      return "reauth";
+    }
+    if (s.currentEpoch !== c.expectedEpoch) {
+      return "conflict";
+    }
+    if (
+      c.record.kind !== "rekey" || c.record.state !== "PENDING" ||
+      c.record.targetEpoch !== s.currentEpoch + 1 || !c.record.prevTh?.equals(s.currentKeys.th)
+    ) {
+      throw new TypeError("invalid rekey exchange");
+    }
+    const key = id(c.record.exchangeId.toUint8Array());
+    if (this.#exchanges.has(key)) {
+      throw new Error("duplicate exchangeId");
+    }
+    const sessionKey = id(c.record.sessionId.toUint8Array());
+    const pending = [...this.#pending.get(sessionKey) ?? []]
+      .map(key => ({ key, ex: this.#readExchange(key, c.now) }))
+      .filter((entry): entry is { key: string; ex: ExchangeRecord } =>
+        entry.ex?.state === "PENDING" && entry.ex.kind === "rekey")
+      .sort((a, b) => (a.ex.createdAt ?? 0) - (b.ex.createdAt ?? 0));
+    while (pending.length >= c.maxPendingRekeys) {
+      const oldest = pending.shift()!;
+      this.#settle(oldest.key, oldest.ex, "SUPERSEDED");
+    }
+    this.#exchanges.set(key, cloneExchange(c.record));
+    const keys = this.#pending.get(sessionKey) ?? new Set<string>();
+    keys.add(key);
+    this.#pending.set(sessionKey, keys);
+    return "created";
+  }
+
+  async supersedeExchange(exchangeId: Uint8Array): Promise<void> {
+    const key = id(exchangeId);
+    const ex = this.#exchanges.get(key);
+    if (ex?.state === "PENDING") {
+      this.#settle(key, ex, "SUPERSEDED");
+    }
+  }
+
+  async commitRekey(c: RekeyCommit): Promise<RekeyCommitResult> {
+    const key = id(c.exchangeId);
+    const ex = this.#readExchange(key, c.now);
+    const s = this.#activeSession(id(c.sessionId), c.now);
+    if (!s || !s.currentKeys) {
+      return "reauth";
+    }
+    if (!ex || ex.kind !== "rekey" || !ex.sessionId.equals(s.sessionId) || ex.state !== "PENDING") {
+      return "expired";
+    }
+    if (s.currentEpoch !== c.expectedEpoch || ex.targetEpoch !== s.currentEpoch + 1) {
+      this.#settle(key, ex, "SUPERSEDED");
+      return "conflict";
+    }
+    if (!ex.prevTh?.equals(s.currentKeys.th)) {
+      this.#settle(key, ex, "SUPERSEDED");
+      return "conflict";
+    }
+    this.#settle(key, ex, "COMPLETED");
+    ex.th = c.th;
+    ex.clientFinished = c.clientFinished;
+    ex.response = c.response;
+    ex.reauthenticatedCredentialId = c.credentialId.slice();
+    if (c.signCountUpdate) {
+      ex.signCountUpdate = cloneUpdate(c.signCountUpdate);
+    }
+    s.prevKeys = s.currentKeys;
+    s.prevValidUntil = c.now + c.epochGraceMs;
+    s.currentKeys = { ...c.currentKeys };
+    s.currentEpoch++;
+    s.authTime = c.authTime;
+    s.absoluteExpiresAt = Math.min(s.hardCapAt, c.absoluteExpiresAt);
+    s.lastAuthCredentialId = c.credentialId.slice();
+    return "committed";
   }
 
   async clearSignCountUpdate(exchangeId: Uint8Array): Promise<boolean> {
