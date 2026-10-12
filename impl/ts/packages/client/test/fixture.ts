@@ -38,6 +38,7 @@ import {
   DIR_C2S,
   DIR_S2C,
   ET_BODY_MAX,
+  DEFAULT_MAX_PLAINTEXT,
 } from "@wake-protocol/core";
 import type { EtRequest, C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
@@ -125,6 +126,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     paths: [] as string[],
     etRequests: [] as EtRequest[],
     etBodyLimit: ET_BODY_MAX,
+    maxPlaintext: DEFAULT_MAX_PLAINTEXT,
     etHandler: undefined as ((request: EtRequest) => Uint8Array) | undefined,
     upResponse: undefined as ((header: MsgHeader, response: Response) => Response | Promise<Response>) | undefined,
     upPlaintext: undefined as ((header: MsgHeader, plaintext: Uint8Array) => Uint8Array) | undefined,
@@ -385,7 +387,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     assert.equal(contentType, "application/wake");
     const rawWire = init!.body as Uint8Array;
     f.wires.push(rawWire);
-    const p = parseWire(rawWire);
+    const p = parseWire(rawWire, { maxPlaintext: f.maxPlaintext });
     f.requests.push(p.header);
     const early = f.upAction?.();
     if (early) {
@@ -467,11 +469,11 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
       ? await seal(requestKeys.c2s, {
         ...header,
         dir: DIR_C2S,
-      }, new Bytes(plaintext))
+      }, new Bytes(plaintext), { maxPlaintext: f.maxPlaintext })
       : await seal(requestKeys.s2c, {
         ...header,
         dir: DIR_S2C,
-      }, new Bytes(plaintext));
+      }, new Bytes(plaintext), { maxPlaintext: f.maxPlaintext });
     const bytes = wire.toUint8Array();
     if (f.tamper) {
       bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;

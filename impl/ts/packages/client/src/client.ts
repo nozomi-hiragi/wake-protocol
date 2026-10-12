@@ -37,6 +37,9 @@ import {
   DIR_C2S,
   DIR_S2C,
   ET_BODY_MAX,
+  ET_REQUEST_MAX_ENCODED,
+  ET_RESPONSE_MAX_ENCODED,
+  DEFAULT_MAX_PLAINTEXT,
 } from "@wake-protocol/core";
 import type {
   EtHeader,
@@ -73,6 +76,8 @@ export interface WakeClientOptions {
   maxEncryptionsPerKey?: number;
   /** Positive safe integer ET body limit in bytes (§11.2). Defaults to ET_BODY_MAX. */
   etBodyLimit?: number;
+  /** Positive safe integer plaintext limit; must cover ET request and response encoding. */
+  maxPlaintext?: number;
 }
 
 export interface SessionInfo {
@@ -297,6 +302,7 @@ export class WakeClient {
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #maxEncryptions: number;
   readonly #etBodyLimit: number;
+  readonly #maxPlaintext: number;
   #state: SessionState | undefined;
   #generation = 0;
   #rekeying = false;
@@ -317,6 +323,13 @@ export class WakeClient {
       throw new WakeError("invalid_option");
     }
     this.#etBodyLimit = bodyLimit;
+    const maxPlaintext = options.maxPlaintext === undefined ? DEFAULT_MAX_PLAINTEXT : options.maxPlaintext;
+    if (!Number.isSafeInteger(maxPlaintext) || maxPlaintext < 1 ||
+        maxPlaintext < ET_REQUEST_MAX_ENCODED - ET_BODY_MAX + bodyLimit ||
+        maxPlaintext < ET_RESPONSE_MAX_ENCODED - ET_BODY_MAX + bodyLimit) {
+      throw new WakeError("invalid_option");
+    }
+    this.#maxPlaintext = maxPlaintext;
   }
 
   get loggedIn(): boolean {
@@ -780,7 +793,7 @@ export class WakeClient {
       requestId,
       context,
       issuedAt: Math.max(0, Math.floor(this.#now() + state.offset)),
-    }, plaintext);
+    }, plaintext, { maxPlaintext: this.#maxPlaintext });
     return {
       requestId,
       context,
@@ -840,7 +853,7 @@ export class WakeClient {
       }
       throw new WakeError(code);
     }
-    const parsed = parseWire(received.bytes);
+    const parsed = parseWire(received.bytes, { maxPlaintext: this.#maxPlaintext });
     const h = parsed.header;
     if (h.dir !== DIR_S2C || !h.sessionId.equals(state.sessionId) || h.epoch !== pending.keys.epoch ||
         !h.requestId.equals(pending.requestId) || h.context !== pending.context) {

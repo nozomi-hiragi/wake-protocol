@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes } from "@wake-protocol/bytes";
 import { bytesToUtf8, utf8ToBytes } from "@wake-protocol/codec";
-import { encodeEtResponse, ET_BODY_MAX } from "@wake-protocol/core";
+import { encodeEtRequest, encodeEtResponse, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED, DEFAULT_MAX_PLAINTEXT } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
 import { fixture, hasCode, jsonResponse } from "./fixture.ts";
 
@@ -67,8 +67,10 @@ test("wakeFetch validation errors are thrown before anything is sent", async () 
 });
 
 test("wakeFetch uses a raised ET body limit for both requests and responses", async () => {
-  const bodyLimit = ET_BODY_MAX + 1;
-  const f = await fixture({ etBodyLimit: bodyLimit });
+  const bodyLimit = DEFAULT_MAX_PLAINTEXT + 1;
+  const maxPlaintext = ET_REQUEST_MAX_ENCODED - ET_BODY_MAX + bodyLimit;
+  const f = await fixture({ etBodyLimit: bodyLimit, maxPlaintext });
+  f.maxPlaintext = maxPlaintext;
   f.etBodyLimit = bodyLimit;
   await f.client.login(login);
   const body = new Uint8Array(bodyLimit).fill(0xa5);
@@ -77,6 +79,16 @@ test("wakeFetch uses a raised ET body limit for both requests and responses", as
     headers: [],
     body: request.body,
   }, { bodyLimit }).toUint8Array();
+  assert.ok(encodeEtRequest({ method: "POST", path: "/echo", query: "", headers: [], body: new Bytes(body) },
+    { bodyLimit }).length > DEFAULT_MAX_PLAINTEXT);
+  assert.ok(encodeEtResponse({ status: 200, headers: [], body: new Bytes(body) },
+    { bodyLimit }).length > DEFAULT_MAX_PLAINTEXT);
+  const defaultFixture = await fixture();
+  await defaultFixture.client.login(login);
+  const sent = defaultFixture.wires.length;
+  await assert.rejects(defaultFixture.client.wakeFetch("/echo", { method: "POST", body }), hasCode("too_large"));
+  await assert.rejects(defaultFixture.client.request("POST /echo", body), hasCode("too_large"));
+  assert.equal(defaultFixture.wires.length, sent);
   const response = await f.client.wakeFetch("/echo", { method: "POST", body });
   assert.deepEqual(f.etRequests[0]!.body.toUint8Array(), body);
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), body);
@@ -102,7 +114,7 @@ for (const limit of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, nul
   });
 }
 
-for (const limit of [1, Number.MAX_SAFE_INTEGER]) {
+for (const limit of [1, ET_BODY_MAX]) {
   test(`accept ET body limit boundary ${limit}`, () => {
     assert.doesNotThrow(() => new WakeClient({
       baseUrl: "",
@@ -159,4 +171,28 @@ test("request() still refuses the reserved wake-et context", async () => {
   const f = await fixture();
   await f.client.login(login);
   await assert.rejects(f.client.request("wake-et", new Uint8Array(0)), hasCode("bad_request"));
+});
+
+for (const limit of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, null, "1"]) {
+  test(`reject invalid plaintext limit ${limit}`, () => {
+    assert.throws(() => new WakeClient({
+      baseUrl: "", getAssertion: async () => { throw new Error(); }, maxPlaintext: limit as number,
+    }), hasCode("invalid_option"));
+  });
+}
+
+for (const encodedMax of [ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED]) {
+  test(`reject plaintext limit below ET encoding boundary ${encodedMax}`, () => {
+    assert.throws(() => new WakeClient({
+      baseUrl: "", getAssertion: async () => { throw new Error(); }, maxPlaintext: encodedMax - 1,
+    }), hasCode("invalid_option"));
+  });
+}
+
+test("accept exact worst-case ET plaintext limit and reject raised body limit without room", () => {
+  const options = { baseUrl: "", getAssertion: async () => { throw new Error(); } };
+  assert.doesNotThrow(() => new WakeClient({ ...options, maxPlaintext: ET_REQUEST_MAX_ENCODED }));
+  assert.throws(() => new WakeClient({ ...options, etBodyLimit: ET_BODY_MAX + 1 }), hasCode("invalid_option"));
+  assert.throws(() => new WakeClient({ ...options, etBodyLimit: Number.MAX_SAFE_INTEGER,
+    maxPlaintext: Number.MAX_SAFE_INTEGER }), hasCode("invalid_option"));
 });
