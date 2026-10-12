@@ -8,7 +8,7 @@
 </head>
 <body>
 <h1>WAKE demo</h1>
-<p>Passkey registration below is outside WAKE; login and messages use WAKE-KX and WAKE-SM.</p>
+<p>Passkey registration below is outside WAKE; login and messages use WAKE-KX, WAKE-SM, WAKE-KR, WAKE-TA and WAKE-ET.</p>
 <p>
   <input data-testid="username" id="username" placeholder="username" autocomplete="username webauthn">
   <button data-testid="register" id="register">Register passkey</button>
@@ -21,6 +21,21 @@
   <button data-testid="session" id="session">Session</button>
   <button data-testid="logout" id="logout">Logout</button>
 </p>
+<p>
+  <button data-testid="rekey" id="rekey">Rekey</button>
+  <button data-testid="me" id="me">Who am I (ET)</button>
+</p>
+<h2>Operations (WAKE-TA over WAKE-ET)</h2>
+<p>
+  <input data-testid="content" id="content" placeholder="operation content" size="30">
+  <button data-testid="create-operation" id="create-operation">Create operation</button>
+</p>
+<p data-testid="operation-link" id="operation-link"></p>
+<p>
+  <input data-testid="operation-id-input" id="operation-id-input" placeholder="operation id" size="30">
+  <button data-testid="check-operation" id="check-operation">Check operation</button>
+</p>
+<pre data-testid="operation-output" id="operation-output"></pre>
 <h2>Status</h2>
 <pre data-testid="status" id="status">idle</pre>
 <h2>Session</h2>

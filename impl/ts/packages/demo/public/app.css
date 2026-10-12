@@ -1,3 +1,8 @@
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
 input, button { font: inherit; margin: 0.25rem 0.25rem 0.25rem 0; }
 pre { background: #eee; padding: 0.5rem; overflow-x: auto; min-height: 1.5rem; }
+.hash { font-family: ui-monospace, monospace; background: #eee; padding: 0.5rem; min-height: 1.5rem; white-space: pre-wrap; overflow-wrap: anywhere; direction: ltr; }
+.hash span { direction: ltr; unicode-bidi: isolate; }
+.hash .space { white-space: pre; }
+.hash .badge { background: #fc0; color: #000; border: 1px solid #960; border-radius: 3px; padding: 0 0.2em; margin: 0 0.1em; font-size: 0.8em; }
+.hash .nl { color: #06c; font-weight: bold; }
