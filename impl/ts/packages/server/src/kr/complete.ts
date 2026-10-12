@@ -99,7 +99,7 @@ export async function completeRekey(
     userId: session.userId,
     errorCode: "webauthn_failed",
   }, options);
-  const finish = await finishRekey(ex.serverPrivateKey!, ex.targetEpoch!, th, clientPublicKey, mac, session, options);
+  const finish = await finishRekey(ex.serverPrivateKey!, ex.targetEpoch!, th, clientPublicKey, mac, verified.credential.credentialId, session, options);
   const { currentKeys, serverTime, absoluteExpiresAt } = finish;
   const response = JSON.stringify(finish.response);
   const prepared = await prepareSignCountUpdate(verified, options);

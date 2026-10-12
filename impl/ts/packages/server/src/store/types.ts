@@ -42,6 +42,10 @@ export interface EpochKeys {
   th: TranscriptHash;
   c2sCount: number;
   s2cCount: number;
+  /** When the authentication that established these keys (login or rekey) happened. */
+  authTime: number;
+  /** The credential that authenticated for these keys. */
+  credentialId: Uint8Array;
 }
 
 export interface SessionRecord {

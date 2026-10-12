@@ -46,7 +46,7 @@ test("TA+KR commits both: new epoch keys, verifiable serverFinished, th in the d
   assert.ok(view.decision.th && new Bytes(view.decision.th).equals(prepared.th!));
   const bundle = await f.server.exportApprovalBundle(op.operationId);
   assert.equal((bundle!.approval as { th: string; }).th, encode(prepared.th!.toUint8Array()));
-  assert.equal(await verifyApprovalBundle(bundle, { origins: [ORIGIN] }), true);
+  assert.equal(await verifyApprovalBundle(bundle, { rpId: RP, origins: [ORIGIN] }), true);
 });
 
 test("a replayed TA+KR approve returns the identical response with the old epoch's keys", async () => {
@@ -199,7 +199,10 @@ test("a wrong clientFinished is webauthn_failed and changes nothing", async () =
   const op = await newOperation(f);
   const ch = await challenge(f, client, op.operationId, true);
   const bad = await prepareTa(f, client, ch, op.operationId, { corruptFinished: true });
+  const countBefore = (await f.credentials.getCredential(f.auth.credential.credentialId))!.signCount;
   await taError(f, client, "approve", bad.body, "webauthn_failed");
+  // The BE=0 counter is advanced only once the request can no longer fail on the KR part.
+  assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))!.signCount, countBefore);
   assert.equal((await f.store.getApproval(decode(ch.approvalId), f.clock.now))?.state, "PENDING");
   assert.equal((await f.store.getExchange(decode(ch.kr!.exchangeId), f.clock.now))?.state, "PENDING");
   assert.equal((await f.server.getOperation(op.operationId))?.status, "PENDING");

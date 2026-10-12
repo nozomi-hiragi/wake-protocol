@@ -16,9 +16,10 @@ import {
 import type { EtHeader, EtMethod } from "@wake-protocol/core";
 import { createWakeServer, MemoryCredentialStore } from "../src/index.ts";
 import type { EtAuth, EtRoute, EtRouteRequest, EtRouteResponse } from "../src/index.ts";
-import { insertSession } from "../src/testing.ts";
+import { insertSession, SoftAuthenticator } from "../src/testing.ts";
 import { encode, expectError, fixture, login, opened, ORIGIN, response, RP, wire } from "./helpers.ts";
 import type { Fixture, Login } from "./helpers.ts";
+import { completeKr, krClient, krWire, prepareKr } from "./kr-helpers.ts";
 
 interface Seen {
   req?: EtRouteRequest;
@@ -126,6 +127,31 @@ test("ET route hit round-trips method, query, headers and body, and passes the a
   });
   assert.equal(out.header.context, "wake-et");
   assert.ok(out.header.requestId.equals(requestHeader.requestId));
+});
+
+test("ET passes the authTime and credential of the request's epoch during the grace period", async () => {
+  const seen: Seen = {};
+  const f = await fixture({ routes: [echoRoute(seen)] });
+  const old = krClient(await login(f));
+  const loginTime = f.clock.now;
+  const spare = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  f.credentials.setCredential(spare.credential);
+  f.clock.now += 10_000;
+  const rekeyTime = f.clock.now;
+  const prepared = await prepareKr(f, old, {}, spare);
+  await completeKr(f, old, prepared);
+  const current = prepared.next;
+  f.clock.now += 1_000;
+  const plaintext = request("POST", "/echo").toUint8Array();
+  const status = async (client: typeof old) => (await sendTransport(f, await krWire(f, client, "wake-et", plaintext))).status;
+  assert.equal(await status(old), 200);
+  assert.equal(seen.auth?.epoch, 0);
+  assert.equal(seen.auth?.authTime, loginTime);
+  assert.equal(seen.auth?.credentialId, encode(f.auth.credential.credentialId));
+  assert.equal(await status(current), 200);
+  assert.equal(seen.auth?.epoch, 1);
+  assert.equal(seen.auth?.authTime, rekeyTime);
+  assert.equal(seen.auth?.credentialId, encode(spare.credential.credentialId));
 });
 
 test("ET dispatches only on an exact method and path match", async () => {

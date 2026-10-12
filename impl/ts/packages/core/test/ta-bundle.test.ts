@@ -90,9 +90,9 @@ async function build(o: Options = {}) {
 
 type Bundle = Awaited<ReturnType<typeof build>>;
 
-async function code(bundle: unknown, origins: readonly string[] = [ORIGIN]): Promise<string | undefined> {
+async function code(bundle: unknown, origins: readonly string[] = [ORIGIN], rpId = RP_ID): Promise<string | undefined> {
   try {
-    await verifyApprovalBundle(bundle, { origins });
+    await verifyApprovalBundle(bundle, { rpId, origins });
   } catch (e) {
     if (e instanceof WakeError) {
       return e.code;
@@ -106,8 +106,8 @@ const clone = (b: Bundle): Bundle => structuredClone(b);
 
 describe("approval bundle", () => {
   it("accepts a TA bundle and a TA+KR bundle", async () => {
-    assert.equal(await verifyApprovalBundle(await build(), { origins: [ORIGIN] }), true);
-    assert.equal(await verifyApprovalBundle(await build({ th: filled(32, 9) }), { origins: [ORIGIN] }), true);
+    assert.equal(await verifyApprovalBundle(await build(), { rpId: RP_ID, origins: [ORIGIN] }), true);
+    assert.equal(await verifyApprovalBundle(await build({ th: filled(32, 9) }), { rpId: RP_ID, origins: [ORIGIN] }), true);
   });
 
   it("accepts JSON text and UTF-8 bytes", async () => {
@@ -208,6 +208,13 @@ describe("approval bundle", () => {
 
   it("step 4: authenticatorData rpIdHash and flags", async () => {
     assert.equal(await code(await build({ rpId: "evil.example" })), "bundle_rp_id_mismatch");
+    // The bundle claims another rpId and its rpIdHash matches that claim: only the caller's rpId counts.
+    const claimed = clone(await build({ rpId: "evil.example" }));
+    claimed.rpId = "evil.example";
+    assert.equal(await code(claimed), "bundle_rp_id_mismatch");
+    assert.equal(await code(claimed, [ORIGIN], "evil.example"), undefined);
+    assert.equal(await code(await build(), [ORIGIN], "evil.example"), "bundle_rp_id_mismatch");
+    assert.equal(await code(await build(), [ORIGIN], ""), "invalid_option");
     assert.equal(await code(await build({ flags: 0x01 })), "bundle_authenticator_data_invalid");
     assert.equal(await code(await build({ flags: 0x04 })), "bundle_authenticator_data_invalid");
     assert.equal(await code(await build({ flags: 0x00 })), "bundle_authenticator_data_invalid");

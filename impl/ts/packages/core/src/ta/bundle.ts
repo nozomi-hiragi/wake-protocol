@@ -24,9 +24,10 @@ function equal(a: Uint8Array, b: Uint8Array): boolean {
 
 /**
  * Accepts a parsed JSON object, JSON text, or UTF-8 JSON bytes. SPKI replaces Appendix C's COSE_Key.
+ * The caller supplies the expected rpId (Appendix C step 4); the bundle's own rpId is never trusted.
  * A valid signature does not establish credential ownership, operation status, or the KR transcript's provenance.
  */
-export async function verifyApprovalBundle(bundle: unknown, opts: { origins: readonly string[] }): Promise<true> {
+export async function verifyApprovalBundle(bundle: unknown, opts: { rpId: string; origins: readonly string[] }): Promise<true> {
   let input: Record<string, unknown>;
   if (bundle instanceof Uint8Array) {
     input = parseJsonObject(bundle, "invalid_bundle");
@@ -40,6 +41,12 @@ export async function verifyApprovalBundle(bundle: unknown, opts: { origins: rea
   if (input.format !== "WAKE/1 ta-bundle" || typeof input.rpId !== "string" || input.rpId.length === 0 ||
       typeof input.content !== "string") {
     fail("invalid_bundle");
+  }
+  if (typeof opts.rpId !== "string" || opts.rpId.length === 0) {
+    throw new WakeError("invalid_option");
+  }
+  if (input.rpId !== opts.rpId) {
+    fail("bundle_rp_id_mismatch");
   }
   checkContent(input.content);
   if (typeof input.nonce !== "string" || !/^[0-9a-f]{32}$/u.test(input.nonce) ||
@@ -77,7 +84,7 @@ export async function verifyApprovalBundle(bundle: unknown, opts: { origins: rea
   if (authData.length < 37) {
     fail("bundle_authenticator_data_invalid");
   }
-  if (!equal(authData.slice(0, 32), await sha256(utf8ToBytes(input.rpId)))) {
+  if (!equal(authData.slice(0, 32), await sha256(utf8ToBytes(opts.rpId)))) {
     fail("bundle_rp_id_mismatch");
   }
   const flags = authData[32]!;

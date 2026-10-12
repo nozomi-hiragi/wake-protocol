@@ -94,12 +94,18 @@ export async function serveEt(
   if (!route) {
     return etError(404, "route_not_found").toUint8Array();
   }
+  // The request was sealed with the epoch's keys, so it carries that epoch's authentication, not the newest one.
+  const keys = header.epoch === session.currentEpoch ? session.currentKeys :
+    header.epoch === session.currentEpoch - 1 ? session.prevKeys : undefined;
+  if (!keys) {
+    throw new WakeError("reauth");
+  }
   const auth: EtAuth = {
     userId: session.userId,
     sessionId: base64urlnopad.encode(header.sessionId.toUint8Array()),
     epoch: header.epoch,
-    credentialId: base64urlnopad.encode(session.lastAuthCredentialId),
-    authTime: session.authTime,
+    credentialId: base64urlnopad.encode(keys.credentialId),
+    authTime: keys.authTime,
     requestId: base64urlnopad.encode(header.requestId.toUint8Array()),
   };
   try {

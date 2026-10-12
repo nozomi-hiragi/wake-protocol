@@ -211,3 +211,67 @@ test("credential counter CAS admits exactly one concurrent update from the same 
   assert.equal((await store.getCredential(id))?.signCount, 5);
   assert.equal(await store.compareAndSetSignCount(new Uint8Array([9]), 0, 1), false);
 });
+
+test("listOperations returns only the approver's operations in (createdAt, operationId) order across pages", async () => {
+  const store = new MemoryWakeStore();
+  const users = Array.from({ length: 30 }, (_, i) => `user${i}`);
+  const expected = new Map<string, { operationId: string; createdAt: number; }[]>();
+  let n = 0;
+  // Interleaved users, inserted out of order, with ties on createdAt (resolved by operationId).
+  for (let round = 0; round < 12; round++) {
+    for (const userId of users) {
+      n++;
+      const operationId = (n * 7919 % 100_003).toString(16).padStart(64, "0");
+      const createdAt = (n * 31) % 5;
+      const record = {
+        operationId,
+        content: "c",
+        nonce: "0".repeat(32),
+        approverUserId: userId,
+        status: "PENDING" as const,
+        createdAt,
+        expiresAt: 1000,
+      };
+      assert.equal(await store.createOperation(record), true);
+      expected.set(userId, [...expected.get(userId) ?? [], { operationId, createdAt }]);
+    }
+  }
+  assert.equal(await store.createOperation({
+    operationId: [...expected.get("user3")!][0]!.operationId,
+    content: "c",
+    nonce: "0".repeat(32),
+    approverUserId: "user3",
+    status: "PENDING",
+    createdAt: 0,
+    expiresAt: 1000,
+  }), false);
+  for (const userId of ["user0", "user3", "user29"]) {
+    const want = expected.get(userId)!.sort((a, b) =>
+      a.createdAt - b.createdAt || (a.operationId < b.operationId ? -1 : 1));
+    const got: string[] = [];
+    let after: { createdAt: number; operationId: string; } | undefined;
+    for (;;) {
+      const page = await store.listOperations({ approverUserId: userId, limit: 5, now: 0, ...(after ? { after } : {}) });
+      assert.ok(page.length <= 5);
+      assert.ok(page.every(op => op.approverUserId === userId));
+      if (page.length === 0) {
+        break;
+      }
+      got.push(...page.map(op => op.operationId));
+      const last = page.at(-1)!;
+      after = { createdAt: last.createdAt, operationId: last.operationId };
+    }
+    assert.deepEqual(got, want.map(op => op.operationId), userId);
+  }
+  assert.deepEqual(await store.listOperations({ approverUserId: "nobody", limit: 5, now: 0 }), []);
+  // Decided and expired operations stay listed, filtered by their derived status.
+  const first = expected.get("user0")![0]!;
+  assert.equal(await store.cancelOperation(first.operationId, 0), "cancelled");
+  const all = await store.listOperations({ approverUserId: "user0", limit: 100, now: 0 });
+  assert.equal(all.length, 12);
+  assert.deepEqual(
+    (await store.listOperations({ approverUserId: "user0", status: "CANCELLED", limit: 100, now: 0 })).map(op => op.operationId),
+    [first.operationId],
+  );
+  assert.equal((await store.listOperations({ approverUserId: "user0", status: "EXPIRED", limit: 100, now: 1000 })).length, 11);
+});

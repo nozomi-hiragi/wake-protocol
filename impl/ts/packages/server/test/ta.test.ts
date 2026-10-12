@@ -315,8 +315,8 @@ test("approve stores the authenticator's raw bytes and the bundle verifies offli
   assert.equal(bundle.operationId, op.operationId);
   assert.equal(bundle.nonce, op.nonce);
   assert.equal((bundle.approval as { th: unknown; }).th, null);
-  assert.equal(await verifyApprovalBundle(bundle, { origins: [ORIGIN] }), true);
-  await assert.rejects(verifyApprovalBundle(bundle, { origins: ["https://other.example.com"] }));
+  assert.equal(await verifyApprovalBundle(bundle, { rpId: RP, origins: [ORIGIN] }), true);
+  await assert.rejects(verifyApprovalBundle(bundle, { rpId: RP, origins: ["https://other.example.com"] }));
   assert.equal(await f.server.exportApprovalBundle("2".repeat(64)), null);
 });
 
@@ -642,6 +642,27 @@ test("approving revokes the session when the approving credential was removed af
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { wakeError: "reauth" });
   assert.equal((await f.store.getSession(client.sessionId.toUint8Array()))?.status, "REVOKED");
+  // The credential is re-read before the commit, so nothing was decided.
+  assert.equal((await f.server.getOperation(op.operationId))?.status, "PENDING");
+  assert.equal((await f.store.getApproval(decode(prepared.body.approvalId), f.clock.now))?.state, "EXPIRED");
+});
+
+test("replaying a consumed approve rechecks the approving credential and revokes the session", async () => {
+  const { f, client } = await setup();
+  const op = await newOperation(f);
+  // Approved with a second credential, so the session's own credentials are not what gets suspended.
+  const spare = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  f.credentials.setCredential(spare.credential);
+  const prepared = await prepareTa(f, client, await challenge(f, client, op.operationId), op.operationId, { auth: spare });
+  assert.deepEqual((await approve(f, client, prepared)).json.ta, { result: "approved", status: "APPROVED" });
+  f.credentials.setCredential({ ...spare.credential, status: "suspended" });
+  const request = await krWire(f, client, "wake/ta/approve", prepared.body);
+  const response = await sendWire(f, request);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { wakeError: "reauth" });
+  assert.equal((await f.store.getSession(client.sessionId.toUint8Array()))?.status, "REVOKED");
+  // The decision was valid when it was made.
+  assert.equal((await f.server.getOperation(op.operationId))?.status, "APPROVED");
 });
 
 // counters

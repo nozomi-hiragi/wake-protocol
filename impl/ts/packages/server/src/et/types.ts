@@ -8,8 +8,9 @@ export interface EtAuth {
   sessionId: string;
   /** Epoch of the request being served. */
   epoch: number;
-  /** The session's last authenticated credential ID, base64url without padding. */
+  /** The credential that authenticated for this request's epoch, base64url without padding. */
   credentialId: string;
+  /** When the authentication for this request's epoch happened. */
   authTime: number;
   /** base64url without padding. */
   requestId: string;

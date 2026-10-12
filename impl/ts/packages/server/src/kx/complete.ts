@@ -112,20 +112,23 @@ async function deriveLoginResult(
   clientPublicKey: EcPublicKey,
   th: LoginTranscriptHash,
   clientMac: ClientFinishedMac,
+  credentialId: Uint8Array,
   options: ServerOptions,
 ): Promise<LoginResult> {
   const keys = await deriveKeys(await ecdh(ex.serverPrivateKey!, clientPublicKey), th);
   if (!await verifyClientFinished(keys.fkC, th, clientMac)) {
     throw new WakeError("auth_failed");
   }
+  const now = options.now();
   const currentKeys = {
     c2s: await aesKey(keys.kC2s),
     s2c: await aesKey(keys.kS2c),
     th,
     c2sCount: 0,
     s2cCount: 0,
+    authTime: now,
+    credentialId: credentialId.slice(),
   };
-  const now = options.now();
   const absoluteExpiresAt = now + options.authLifetimeMs;
   const hardCapAt = now + options.hardCapMs;
   if (!Number.isSafeInteger(hardCapAt) || hardCapAt < 0) {
@@ -238,7 +241,7 @@ export async function complete(req: Request, options: ServerOptions): Promise<Re
     throw new WakeError("auth_failed");
   }
   const verified = await verifyLogin(ex, body, th, options);
-  const result = await deriveLoginResult(ex, clientPublicKey, th, body.clientMac, options);
+  const result = await deriveLoginResult(ex, clientPublicKey, th, body.clientMac, verified.credential.credentialId, options);
   const session = buildSession(ex, verified, result, options);
   return commitLogin(body, th, session, result, verified, options);
 }

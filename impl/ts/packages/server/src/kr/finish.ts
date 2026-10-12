@@ -40,6 +40,7 @@ export async function finishRekey(
   th: RekeyTranscriptHash,
   clientPublicKey: EcPublicKey,
   mac: ClientFinishedMac,
+  credentialId: Uint8Array,
   session: SessionRecord,
   options: ServerOptions,
 ): Promise<RekeyFinish> {
@@ -47,14 +48,16 @@ export async function finishRekey(
   if (!await verifyClientFinished(keys.fkC, th, mac)) {
     throw new WakeError("webauthn_failed");
   }
+  const serverTime = options.now();
   const currentKeys = {
     c2s: await aesKey(keys.kC2s),
     s2c: await aesKey(keys.kS2c),
     th,
     c2sCount: 0,
     s2cCount: 0,
+    authTime: serverTime,
+    credentialId: credentialId.slice(),
   };
-  const serverTime = options.now();
   const absoluteExpiresAt = Math.min(session.hardCapAt, serverTime + options.authLifetimeMs);
   const finished = await serverFinished(keys.fkS, {
     th,

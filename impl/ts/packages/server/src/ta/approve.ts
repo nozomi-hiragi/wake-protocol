@@ -14,6 +14,7 @@ import {
 import type { ApprovalId, ClientFinishedMac, EcPublicKey, ExchangeId, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
 import { isObject } from "../http.ts";
 import { finishRekey, parseClientPublicKey } from "../kr/finish.ts";
+import type { RekeyFinish } from "../kr/finish.ts";
 import type { ServerOptions } from "../options.ts";
 import type {
   ApprovalCommit,
@@ -90,11 +91,17 @@ async function replay(att: ApprovalRecord, options: ServerOptions): Promise<unkn
   if (att.result === undefined) {
     throw new WakeError("expired");
   }
-  await checkAuthenticatedSession(att.sessionId, options, "reauth");
+  // The credential that made the decision must still be usable for the replay to be answered.
+  const op = await options.store.getOperation(att.operationId, options.now());
+  const decision = op?.decision;
+  const credentialId = decision?.kind === "approved" && att.approvalId.equals(asApprovalId(decision.approvalId)) ?
+    decision.decidedByCredentialId :
+    undefined;
+  await checkAuthenticatedSession(att.sessionId, options, "reauth", credentialId);
   if (att.signCountUpdate) {
     await applySignCountUpdate(att.signCountUpdate, att.approvalId.toUint8Array(), options);
   }
-  await checkAuthenticatedSession(att.sessionId, options, "reauth");
+  await checkAuthenticatedSession(att.sessionId, options, "reauth", credentialId);
   return JSON.parse(att.result) as unknown;
 }
 
@@ -139,38 +146,49 @@ async function plan(req: ApproveRequest, att: ApprovalRecord, session: SessionRe
   return { challenge: await taKrChallenge(th, ta), kr: { ex, req: req.kr, th } };
 }
 
-async function buildCommit(
+/**
+ * The KR part's key agreement and clientFinished check (webauthn_failed on mismatch). It runs before the counter is
+ * advanced, as in wake/kr/complete, so a failing request leaves the counter alone. Null when the exchange is unusable.
+ */
+async function finishKr(p: Plan, verified: VerifiedAssertion, session: SessionRecord, options: ServerOptions): Promise<RekeyFinish | null> {
+  if (!p.kr) {
+    return null;
+  }
+  const { ex, req: kr, th } = p.kr;
+  // Only a usable exchange can derive keys; otherwise the KR part is reported as expired (§10.8).
+  if (ex.state === "PENDING" && options.now() < ex.expiresAt && ex.serverPrivateKey) {
+    return finishRekey(ex.serverPrivateKey, ex.targetEpoch!, th, kr.clientPublicKey, kr.mac, verified.credential.credentialId, session, options);
+  }
+  return null;
+}
+
+function buildCommit(
   req: ApproveRequest,
   att: ApprovalRecord,
   p: Plan,
+  finish: RekeyFinish | null,
   verified: VerifiedAssertion,
   signCountUpdate: SignCountUpdate | undefined,
   session: SessionRecord,
   options: ServerOptions,
-): Promise<ApprovalCommit> {
+): ApprovalCommit {
   let rekey: NonNullable<ApprovalCommit["kr"]>["rekey"] = null;
-  let committed: Record<string, unknown> | null = null;
-  if (p.kr) {
-    const { ex, req: kr, th } = p.kr;
-    // Only a usable exchange can derive keys; otherwise the KR part is reported as expired (§10.8).
-    if (ex.state === "PENDING" && options.now() < ex.expiresAt && ex.serverPrivateKey) {
-      const finish = await finishRekey(ex.serverPrivateKey, ex.targetEpoch!, th, kr.clientPublicKey, kr.mac, session, options);
-      committed = finish.response;
-      rekey = {
-        exchangeId: ex.exchangeId.toUint8Array(),
-        sessionId: session.sessionId.toUint8Array(),
-        expectedEpoch: session.currentEpoch,
-        now: options.now(),
-        authTime: finish.serverTime,
-        th,
-        clientFinished: kr.mac,
-        response: JSON.stringify(finish.response),
-        currentKeys: finish.currentKeys,
-        absoluteExpiresAt: finish.absoluteExpiresAt,
-        epochGraceMs: options.epochGraceMs,
-        credentialId: verified.credential.credentialId,
-      };
-    }
+  const committed = finish ? finish.response : null;
+  if (p.kr && finish) {
+    rekey = {
+      exchangeId: p.kr.ex.exchangeId.toUint8Array(),
+      sessionId: session.sessionId.toUint8Array(),
+      expectedEpoch: session.currentEpoch,
+      now: options.now(),
+      authTime: finish.serverTime,
+      th: p.kr.th,
+      clientFinished: p.kr.req.mac,
+      response: JSON.stringify(finish.response),
+      currentKeys: finish.currentKeys,
+      absoluteExpiresAt: finish.absoluteExpiresAt,
+      epochGraceMs: options.epochGraceMs,
+      credentialId: verified.credential.credentialId,
+    };
   }
   return {
     approvalId: att.approvalId.toUint8Array(),
@@ -253,12 +271,17 @@ export async function approve(body: Record<string, unknown>, session: SessionRec
     approverUserId: op.approverUserId,
     errorCode: "webauthn_failed",
   }, options);
+  // Everything that can still fail the request comes before the counter, so a failure never advances it.
+  const finish = await finishKr(p, verified, session, options);
   // Like KX and KR, a BE=0 counter is advanced by compare-and-set before anything is committed (§6.4).
   const counter = await prepareSignCountUpdate(verified, options);
   if (!counter.accepted) {
     return counterLost(att, options);
   }
-  const commit = await buildCommit(req, att, p, verified, counter.update, session, options);
+  const commit = buildCommit(req, att, p, finish, verified, counter.update, session, options);
+  // The credential may have been suspended or removed while the request was in flight: decide nothing then.
+  // A window between this check and the commit remains.
+  await checkAuthenticatedSession(session.sessionId, options, "reauth", verified.credential.credentialId);
   const result = await options.store.commitApproval(commit);
   if (result.state === "consumed") {
     return replay({ ...att, state: "CONSUMED", result: result.response }, options);

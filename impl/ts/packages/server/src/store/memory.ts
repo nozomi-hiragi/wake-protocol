@@ -208,6 +208,9 @@ export class MemoryWakeStore implements WakeStore {
   #pending = new Map<string, Set<string>>();
   #sessions = new Map<string, SessionRecord>();
   #operations = new Map<string, OperationRecord>();
+  // Operation records per approver in (createdAt, operationId) order, so a list never looks at other users' operations.
+  // Decided operations stay (audit); the arrays hold the same objects as #operations.
+  #operationsByUser = new Map<string, OperationRecord[]>();
   #approvals = new Map<string, ApprovalRecord>();
   // PENDING approval keys per operation and per session.
   #activeByOperation = new Map<string, Set<string>>();
@@ -565,8 +568,28 @@ export class MemoryWakeStore implements WakeStore {
     if (this.#operations.has(record.operationId)) {
       return false;
     }
-    this.#operations.set(record.operationId, cloneOperation(record));
+    const stored = cloneOperation(record);
+    this.#operations.set(record.operationId, stored);
+    const list = this.#operationsByUser.get(stored.approverUserId) ?? [];
+    list.splice(this.#firstAfter(list, stored), 0, stored);
+    this.#operationsByUser.set(stored.approverUserId, list);
     return true;
+  }
+
+  /** The index of the first record that sorts after the (createdAt, operationId) position, by binary search. */
+  #firstAfter(list: OperationRecord[], position: { createdAt: number; operationId: string; }): number {
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      const op = list[mid]!;
+      if (op.createdAt < position.createdAt || (op.createdAt === position.createdAt && op.operationId <= position.operationId)) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low;
   }
 
   async getOperation(operationId: string, now: number): Promise<OperationRecord | null> {
@@ -575,14 +598,15 @@ export class MemoryWakeStore implements WakeStore {
   }
 
   async listOperations(q: OperationQuery): Promise<OperationRecord[]> {
-    return [...this.#operations.values()]
-      .filter(op => op.approverUserId === q.approverUserId)
-      .filter(op => q.status === undefined || operationView(op, q.now).status === q.status)
-      .sort((a, b) => a.createdAt - b.createdAt || (a.operationId < b.operationId ? -1 : a.operationId > b.operationId ? 1 : 0))
-      .filter(op => !q.after || op.createdAt > q.after.createdAt ||
-        (op.createdAt === q.after.createdAt && op.operationId > q.after.operationId))
-      .slice(0, q.limit)
-      .map(op => operationView(op, q.now));
+    const list = this.#operationsByUser.get(q.approverUserId) ?? [];
+    const found: OperationRecord[] = [];
+    for (let i = q.after ? this.#firstAfter(list, q.after) : 0; i < list.length && found.length < q.limit; i++) {
+      const view = operationView(list[i]!, q.now);
+      if (q.status === undefined || view.status === q.status) {
+        found.push(view);
+      }
+    }
+    return found;
   }
 
   /** Common guard of every decision: PENDING and not past expiresAt (§10.9). */
