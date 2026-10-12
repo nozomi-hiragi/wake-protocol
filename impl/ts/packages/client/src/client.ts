@@ -19,6 +19,12 @@ import {
   loginTranscriptHash,
   rekeyTranscriptHash,
   krChallenge,
+  taBinding,
+  taChallenge,
+  taKrChallenge,
+  parseOperationIdHex,
+  asApprovalId,
+  asApprovalNonce,
   kxChallenge,
   clientFinished,
   verifyServerFinished,
@@ -39,9 +45,18 @@ import type {
   LoginTranscriptHash,
   TranscriptHash,
   RekeyTranscriptHash,
+  WebAuthnChallenge,
 } from "@wake-protocol/core";
-import type { GetAssertion, GetAssertionOptions } from "./assertion.ts";
+import type { AuthenticationResponseJSON, GetAssertion, GetAssertionOptions } from "./assertion.ts";
 import { integer, object, responseJson } from "./json.ts";
+import { OPERATION_STATUSES, parseOperationList, parseResult, verifiedOperation } from "./ta.ts";
+import type {
+  OperationList,
+  OperationStatus,
+  TaApproveResult,
+  TaRejectResult,
+  VerifiedOperation,
+} from "./ta.ts";
 
 export interface WakeClientOptions {
   baseUrl: string;
@@ -68,6 +83,20 @@ export interface WakeSessionInfo extends SessionInfo {
 }
 
 export type RekeyInfo = Omit<SessionInfo, "sessionId">;
+
+export interface ApproveOptions {
+  /** Run TA+KR (§10.8): one WebAuthn signature authenticates the approval and the key rotation. */
+  rekey?: boolean;
+}
+
+export type TaKrResult = ({ result: "committed" } & RekeyInfo) | { result: "conflict" } | { result: "expired" };
+
+export interface ApproveInfo {
+  operationId: string;
+  ta: { result: TaApproveResult; status: string };
+  /** Present only when `rekey` was requested. */
+  kr?: TaKrResult;
+}
 
 interface EpochState {
   epoch: number;
@@ -180,7 +209,7 @@ function parseWebAuthn(value: unknown): Omit<GetAssertionOptions, "challenge"> {
   return webauthn;
 }
 
-async function parseRekeyStart(value: Record<string, unknown>, currentEpoch: number) {
+async function parseRekeyKey(value: Record<string, unknown>, currentEpoch: number) {
   const epoch = integer(value.epoch, 0xffffffff);
   if (epoch !== currentEpoch + 1) {
     throw new WakeError("bad_request");
@@ -196,14 +225,26 @@ async function parseRekeyStart(value: Record<string, unknown>, currentEpoch: num
     }
     throw e;
   }
+  return { exchangeId, epoch, serverNonce, serverPublicKey };
+}
+
+async function parseRekeyStart(value: Record<string, unknown>, currentEpoch: number) {
   return {
-    exchangeId,
-    epoch,
-    serverNonce,
-    serverPublicKey,
+    ...await parseRekeyKey(value, currentEpoch),
     expiresAt: integer(value.expiresAt),
     webauthn: parseWebAuthn(value.webauthn),
   };
+}
+
+type RotationStart = Awaited<ReturnType<typeof parseRekeyKey>> & { webauthn: Omit<GetAssertionOptions, "challenge"> };
+
+interface PreparedRotation {
+  keys: EpochState;
+  th: RekeyTranscriptHash;
+  fkS: FinishedCryptoKeyS;
+  finished: ClientFinishedMac;
+  clientPublicKey: Bytes;
+  assertion: AuthenticationResponseJSON;
 }
 
 type ParsedStart = Awaited<ReturnType<typeof parseStart>>;
@@ -443,53 +484,72 @@ export class WakeClient {
       this.#checkRotation(state, generation);
       const start = await parseRekeyStart(value, previous.epoch);
       const deadline = start.expiresAt - state.offset;
-      const prepared = await this.#prepareRotation(state, generation, previous, start);
-      const completed = await this.#completeRotation(state, generation, previous, prepared.keys, prepared.plaintext, deadline);
+      const prepared = await this.#prepareRotation(state, generation, previous, start, async (th) => krChallenge(th));
+      const plaintext = new Bytes(utf8ToBytes(JSON.stringify({
+        exchangeId: encodeBinary(start.exchangeId),
+        clientPublicKey: encodeBinary(prepared.clientPublicKey),
+        assertion: prepared.assertion,
+        clientFinished: encodeBinary(prepared.finished),
+      })));
+      const completed = await this.#completeRotation(
+        state, generation, previous, "wake/kr/complete", plaintext, deadline, prepared.keys,
+      );
       let info: RekeyInfo;
       if (completed.recovered) {
         info = completed.info;
       } else {
-        try {
-          const json = parseJsonObject(completed.plaintext, "auth_failed");
-          info = {
-            epoch: integer(json.epoch, 0xffffffff, "auth_failed"),
-            serverTime: integer(json.serverTime, Number.MAX_SAFE_INTEGER, "auth_failed"),
-            absoluteExpiresAt: integer(json.absoluteExpiresAt, Number.MAX_SAFE_INTEGER, "auth_failed"),
-            idleTimeoutSec: integer(json.idleTimeoutSec, 0xffffffff, "auth_failed"),
-          };
-          const mac = decodeBase64urlField(json.serverFinished, "auth_failed");
-          if (info.epoch !== prepared.keys.epoch || mac.length !== 32 || !await verifyServerFinished(prepared.fkS, {
-            th: prepared.th,
-            clientFinished: prepared.finished,
-            ...info,
-          }, asServerFinishedMac(mac))) {
-            throw new WakeError("auth_failed");
-          }
-        } catch (e) {
-          if (this.#state === state) {
-            this.#state = undefined;
-          }
-          throw e;
-        }
+        info = await this.#verifyRotation(state, prepared, completed.plaintext);
       }
-      this.#checkRotation(state, generation);
-      // Pending requests keep their own old keys. Ordinary sends now select only this generation.
-      state.current = prepared.keys;
-      state.offset = info.serverTime - completed.arrivedAt;
-      state.absoluteExpiresAt = info.absoluteExpiresAt;
-      state.idleTimeoutSec = info.idleTimeoutSec;
+      this.#commitRotation(state, generation, prepared.keys, info, completed.arrivedAt);
       return info;
     } finally {
       this.#rekeying = false;
     }
   }
 
+  /** Verifies serverFinished for the pending generation; any failure drops the session (security event). */
+  async #verifyRotation(state: SessionState, prepared: PreparedRotation, input: Uint8Array | Record<string, unknown>): Promise<RekeyInfo> {
+    try {
+      const json = input instanceof Uint8Array ? parseJsonObject(input, "auth_failed") : input;
+      const info: RekeyInfo = {
+        epoch: integer(json.epoch, 0xffffffff, "auth_failed"),
+        serverTime: integer(json.serverTime, Number.MAX_SAFE_INTEGER, "auth_failed"),
+        absoluteExpiresAt: integer(json.absoluteExpiresAt, Number.MAX_SAFE_INTEGER, "auth_failed"),
+        idleTimeoutSec: integer(json.idleTimeoutSec, 0xffffffff, "auth_failed"),
+      };
+      const mac = decodeBase64urlField(json.serverFinished, "auth_failed");
+      if (info.epoch !== prepared.keys.epoch || mac.length !== 32 || !await verifyServerFinished(prepared.fkS, {
+        th: prepared.th,
+        clientFinished: prepared.finished,
+        ...info,
+      }, asServerFinishedMac(mac))) {
+        throw new WakeError("auth_failed");
+      }
+      return info;
+    } catch (e) {
+      if (this.#state === state) {
+        this.#state = undefined;
+      }
+      throw e;
+    }
+  }
+
+  /** Pending requests keep their own old keys. Ordinary sends now select only this generation. */
+  #commitRotation(state: SessionState, generation: number, keys: EpochState, info: RekeyInfo, arrivedAt: number): void {
+    this.#checkRotation(state, generation);
+    state.current = keys;
+    state.offset = info.serverTime - arrivedAt;
+    state.absoluteExpiresAt = info.absoluteExpiresAt;
+    state.idleTimeoutSec = info.idleTimeoutSec;
+  }
+
   async #prepareRotation(
     state: SessionState,
     generation: number,
     previous: EpochState,
-    start: Awaited<ReturnType<typeof parseRekeyStart>>,
-  ) {
+    start: RotationStart,
+    challenge: (th: RekeyTranscriptHash) => Promise<WebAuthnChallenge>,
+  ): Promise<PreparedRotation> {
     // Ephemeral private key and raw derived keys leave scope before any transport retries.
     const pair = await generateEphemeral(false);
     const th: RekeyTranscriptHash = await rekeyTranscriptHash({
@@ -501,7 +561,7 @@ export class WakeClient {
     this.#checkRotation(state, generation);
     const assertion = await this.#getAssertion({
       ...start.webauthn,
-      challenge: (await krChallenge(th)).toUint8Array(),
+      challenge: (await challenge(th)).toUint8Array(),
     });
     this.#checkRotation(state, generation);
     const raw = await deriveKeys(await ecdh(pair.privateKey, start.serverPublicKey), th);
@@ -513,13 +573,7 @@ export class WakeClient {
     ]);
     const keys: EpochState = { epoch: start.epoch, th, c2s, s2c, encryptions: 0 };
     const finished = await clientFinished(fkC, th);
-    const plaintext = new Bytes(utf8ToBytes(JSON.stringify({
-      exchangeId: encodeBinary(start.exchangeId),
-      clientPublicKey: encodeBinary(pair.publicKey),
-      assertion,
-      clientFinished: encodeBinary(finished),
-    })));
-    return { keys, th, fkS, finished, plaintext };
+    return { keys, th, fkS, finished, clientPublicKey: pair.publicKey, assertion };
   }
 
   #checkRotation(state: SessionState, generation: number): void {
@@ -528,13 +582,18 @@ export class WakeClient {
     }
   }
 
+  /**
+   * Sends one idempotent plaintext sealed with the previous generation, resending it with a fresh requestId until
+   * the deadline. With `recoverKeys`, epoch_retired means the commit happened and the response was lost (§9.6).
+   */
   async #completeRotation(
     state: SessionState,
     generation: number,
     previous: EpochState,
-    keys: EpochState,
+    context: string,
     plaintext: Bytes,
     deadline: number,
+    recoverKeys: EpochState | undefined,
   ): Promise<
     { recovered: false; plaintext: Uint8Array; arrivedAt: number } |
     { recovered: true; info: WakeSessionInfo; arrivedAt: number }
@@ -545,7 +604,7 @@ export class WakeClient {
       if (this.#now() >= deadline) {
         throw new WakeError("expired");
       }
-      const pending = await this.#sealRequest(state, "wake/kr/complete", plaintext, previous);
+      const pending = await this.#sealRequest(state, context, plaintext, previous);
       this.#checkRotation(state, generation);
       // Only fetch/body failures are swallowed here. Cryptographic and protocol failures propagate.
       const received = await this.#sendRequest(state, pending, true);
@@ -555,8 +614,8 @@ export class WakeClient {
         try {
           result = await this.#acceptResponse(state, pending, received);
         } catch (e) {
-          if (e instanceof WakeError && e.code === "epoch_retired") {
-            return this.#recoverRotation(state, generation, keys);
+          if (e instanceof WakeError && e.code === "epoch_retired" && recoverKeys !== undefined) {
+            return this.#recoverRotation(state, generation, recoverKeys);
           }
           if (!(e instanceof WakeError) || e.code !== "retry") {
             throw e;
@@ -746,6 +805,178 @@ export class WakeClient {
       serverTime: integer(value.serverTime),
       rekeyRecommended: value.rekeyRecommended,
     };
+  }
+
+  /** §10.6 wake/ta/list. Every entry is checked like wake/ta/get; one inconsistent entry rejects the page. */
+  async listOperations(query: { status?: OperationStatus; limit?: number; cursor?: string } = {}): Promise<OperationList> {
+    if (query.status !== undefined && !(OPERATION_STATUSES as readonly string[]).includes(query.status)) {
+      throw new WakeError("bad_request");
+    }
+    if (query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 20)) {
+      throw new WakeError("bad_request");
+    }
+    if (query.cursor !== undefined && (typeof query.cursor !== "string" || query.cursor.length === 0)) {
+      throw new WakeError("bad_request");
+    }
+    const body = {
+      ...(query.status === undefined ? {} : { status: query.status }),
+      ...(query.limit === undefined ? {} : { limit: query.limit }),
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+    };
+    return parseOperationList(await this.#taCall("wake/ta/list", body));
+  }
+
+  /**
+   * §10.11 steps 1-4: the content is trusted only if SHA-256 of the locally assembled hashInput equals the
+   * REQUESTED operationId (an `operation_mismatch` error otherwise).
+   */
+  async getOperation(operationIdHex: string): Promise<VerifiedOperation> {
+    parseOperationIdHex(operationIdHex);
+    return verifiedOperation(await this.#taCall("wake/ta/get", { operationId: operationIdHex }), operationIdHex);
+  }
+
+  /** §10.6 wake/ta/reject. No WebAuthn is involved (§10.9). */
+  async reject(operationIdHex: string): Promise<{ result: TaRejectResult; status: string }> {
+    parseOperationIdHex(operationIdHex);
+    const value = await this.#taCall("wake/ta/reject", { operationId: operationIdHex });
+    if (typeof value.status !== "string") {
+      throw new WakeError("bad_request");
+    }
+    return { result: parseResult(value.result, ["rejected", "already_decided", "expired"] as const), status: value.status };
+  }
+
+  /**
+   * §10.11 steps 6-8. The challenge is computed over the CALLER's operationId, never one named by the server.
+   * With `rekey`, the same signature also commits a key rotation (§10.8); the new epoch is adopted only when the
+   * server reports `committed` and serverFinished verifies.
+   */
+  async approve(operationIdHex: string, options: ApproveOptions = {}): Promise<ApproveInfo> {
+    const id = parseOperationIdHex(operationIdHex);
+    const rekey = options.rekey === true;
+    const state = this.#state;
+    if (!state) {
+      throw new WakeError("reauth");
+    }
+    if (rekey && this.#rekeying) {
+      throw new WakeError("conflict");
+    }
+    const generation = this.#generation;
+    const previous = state.current;
+    this.#rekeying ||= rekey;
+    try {
+      const c = await this.#taCall("wake/ta/challenge", { operationId: operationIdHex, rekey });
+      this.#checkRotation(state, generation);
+      const approvalId = decodeBase64urlField(c.approvalId, "bad_request", 16);
+      const approvalNonce = decodeBase64urlField(c.approvalNonce, "bad_request", 32);
+      const expiresAt = integer(c.expiresAt);
+      const webauthn = parseWebAuthn(c.webauthn);
+      if ((c.kr === null) === rekey) {
+        throw new WakeError("bad_request");
+      }
+      const ta = await taBinding({
+        approvalId: asApprovalId(approvalId),
+        operationId: id,
+        approvalNonce: asApprovalNonce(approvalNonce),
+        sessionId: state.sessionId,
+      });
+      const deadline = expiresAt - state.offset;
+      let prepared: PreparedRotation | undefined;
+      let exchangeId: Bytes | undefined;
+      let assertion: AuthenticationResponseJSON;
+      if (rekey) {
+        const start = { ...await parseRekeyKey(object(c.kr), previous.epoch), webauthn };
+        exchangeId = start.exchangeId;
+        prepared = await this.#prepareRotation(state, generation, previous, start, (th) => taKrChallenge(th, ta));
+        assertion = prepared.assertion;
+      } else {
+        assertion = await this.#getAssertion({ ...webauthn, challenge: (await taChallenge(ta)).toUint8Array() });
+        this.#checkRotation(state, generation);
+      }
+      const plaintext = new Bytes(utf8ToBytes(JSON.stringify({
+        approvalId: encodeBinary(new Bytes(approvalId)),
+        operationId: operationIdHex,
+        assertion,
+        kr: prepared === undefined ? null : {
+          exchangeId: encodeBinary(exchangeId!),
+          clientPublicKey: encodeBinary(prepared.clientPublicKey),
+          clientFinished: encodeBinary(prepared.finished),
+        },
+      })));
+      const completed = await this.#completeRotation(
+        state, generation, previous, "wake/ta/approve", plaintext, deadline, prepared?.keys,
+      );
+      if (completed.recovered) {
+        // The old epoch is retired, so the commit happened: adopt the epoch confirmed by wake/session under it.
+        this.#commitRotation(state, generation, prepared!.keys, completed.info, completed.arrivedAt);
+        const op = await this.getOperation(operationIdHex);
+        if (op.status !== "APPROVED") {
+          this.#state = undefined;
+          throw new WakeError("bad_request");
+        }
+        const { epoch, serverTime, absoluteExpiresAt, idleTimeoutSec } = completed.info;
+        return {
+          operationId: operationIdHex,
+          ta: { result: "approved", status: "APPROVED" },
+          kr: { result: "committed", epoch, serverTime, absoluteExpiresAt, idleTimeoutSec },
+        };
+      }
+      try {
+        return await this.#finishApprove(state, generation, operationIdHex, completed.plaintext, completed.arrivedAt, prepared);
+      } catch (e) {
+        // After a rekey request the server may have committed: an unreadable answer leaves the epoch unknown.
+        if (prepared !== undefined && this.#state === state) {
+          this.#state = undefined;
+        }
+        throw e;
+      }
+    } finally {
+      if (rekey) {
+        this.#rekeying = false;
+      }
+    }
+  }
+
+  async #finishApprove(
+    state: SessionState,
+    generation: number,
+    operationIdHex: string,
+    plaintext: Uint8Array,
+    arrivedAt: number,
+    prepared: PreparedRotation | undefined,
+  ): Promise<ApproveInfo> {
+    const value = parseJsonObject(plaintext, "bad_request");
+    if (value.operationId !== operationIdHex) {
+      throw new WakeError("bad_request");
+    }
+    const taPart = object(value.ta);
+    if (typeof taPart.status !== "string") {
+      throw new WakeError("bad_request");
+    }
+    const info: ApproveInfo = {
+      operationId: operationIdHex,
+      ta: { result: parseResult(taPart.result, ["approved", "already_decided", "expired"] as const), status: taPart.status },
+    };
+    if (prepared === undefined) {
+      if (value.kr !== null) {
+        throw new WakeError("bad_request");
+      }
+      return info;
+    }
+    const kr = object(value.kr);
+    const result = parseResult(kr.result, ["committed", "conflict", "expired"] as const);
+    if (result !== "committed") {
+      // The pending generation is discarded; the current epoch stays.
+      info.kr = { result };
+      return info;
+    }
+    const rekeyInfo = await this.#verifyRotation(state, prepared, kr);
+    this.#commitRotation(state, generation, prepared.keys, rekeyInfo, arrivedAt);
+    info.kr = { result, ...rekeyInfo };
+    return info;
+  }
+
+  async #taCall(context: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return parseJsonObject(await this.#request(context, utf8ToBytes(JSON.stringify(body))), "bad_request");
   }
 
   /** Deletes local keys even on failure. Transport failures resolve; protocol errors propagate. */

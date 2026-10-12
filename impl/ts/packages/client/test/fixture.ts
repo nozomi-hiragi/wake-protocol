@@ -1,6 +1,6 @@
 // Spec §7, §8, §9: independent in-memory peer using only core primitives.
 import assert from "node:assert/strict";
-import { base64urlnopad } from "@scure/base";
+import { base64urlnopad, hex } from "@scure/base";
 import { Bytes } from "@wake-protocol/bytes";
 import { bytesToUtf8, parseIJson, utf8ToBytes } from "@wake-protocol/codec";
 import {
@@ -14,6 +14,14 @@ import {
   loginTranscriptHash,
   rekeyTranscriptHash,
   krChallenge,
+  taBinding,
+  taChallenge,
+  taKrChallenge,
+  asApprovalId,
+  asApprovalNonce,
+  asTaNonce,
+  parseOperationIdHex,
+  createOperationIdentity,
   parseJsonObject,
   decodeBase64urlField,
   newExchangeId,
@@ -28,7 +36,7 @@ import {
   DIR_C2S,
   DIR_S2C,
 } from "@wake-protocol/core";
-import type { C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash } from "@wake-protocol/core";
+import type { C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
 import type { GetAssertion, GetAssertionOptions, WakeClientOptions } from "../src/index.ts";
 
@@ -60,7 +68,10 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     prevTh: TranscriptHash;
     epoch: number;
     response?: Record<string, unknown>;
+    boundApproval?: string;
   }>();
+  const operations = new Map<string, { content: string; nonce: string; status: string }>();
+  const approvals = new Map<string, { operationId: string; nonce: Uint8Array; id: Uint8Array; rekey: string | undefined; response?: Record<string, unknown> }>();
   const f = {
     localTime: 1_000_000,
     serverTime: 2_000_000,
@@ -97,6 +108,17 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     krCompleteError: undefined as string | undefined,
     krCompleteBodies: [] as string[],
     krCompleteResponse: undefined as ((attempt: number, response: Response) => Response | Promise<Response>) | undefined,
+    operations,
+    taRequests: [] as { context: string; body: Record<string, unknown> }[],
+    taGetMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
+    taListMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
+    taChallengeMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
+    taApproveError: undefined as string | undefined,
+    taApproveBodies: [] as string[],
+    taApproveResponse: undefined as ((attempt: number, response: Response) => Response | Promise<Response>) | undefined,
+    taKrResult: undefined as "conflict" | "expired" | undefined,
+    taApproveMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
+    taApproveKrMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
     upResponse: undefined as ((header: MsgHeader, response: Response) => Response | Promise<Response>) | undefined,
     upPlaintext: undefined as ((header: MsgHeader, plaintext: Uint8Array) => Uint8Array) | undefined,
     upAction: undefined as (() => Response | undefined) | undefined,
@@ -109,6 +131,157 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     assertionOptions: undefined as GetAssertionOptions | undefined,
     sleeps: [] as number[],
     client: undefined as unknown as WakeClient,
+    addOperation: undefined as unknown as (content: string, nonce?: string) => Promise<{ hashInput: string; operationId: string }>,
+  };
+  const commitKr = async (
+    exchange: { pair: typeof pair; nonce: typeof serverNonce; prevTh: TranscriptHash; epoch: number; response?: Record<string, unknown> },
+    body: Record<string, unknown>,
+    challengeFor: (th: RekeyTranscriptHash) => Promise<WebAuthnChallenge>,
+  ) => {
+    if (exchange.response) {
+      return;
+    }
+    const clientPublicKey = await parseEcPublicKey(decodeBase64urlField(body.clientPublicKey, "invalid_request"));
+    const th = await rekeyTranscriptHash({
+      exchangeId: asExchangeId(decodeBase64urlField(body.exchangeId, "invalid_request")),
+      sessionId,
+      epoch: exchange.epoch,
+      prevTh: exchange.prevTh,
+      serverNonce: exchange.nonce,
+      serverPublicKey: exchange.pair.publicKey,
+      clientPublicKey,
+    });
+    const assertion = body.assertion as { response: { clientDataJSON: string } };
+    const clientData = parseJsonObject(
+      decodeBase64urlField(assertion.response.clientDataJSON, "invalid_request"), "invalid_request",
+    );
+    assert.equal(clientData.challenge, encode(await challengeFor(th)));
+    const raw = await deriveKeys(await ecdh(exchange.pair.privateKey, clientPublicKey), th);
+    const cf = asClientFinishedMac(decodeBase64urlField(body.clientFinished, "invalid_request"));
+    assert.equal(await verifyClientFinished(raw.fkC, th, cf), true);
+    epochs.set(exchange.epoch, { c2s: await aesKey(raw.kC2s), s2c: await aesKey(raw.kS2c) });
+    f.currentEpoch = exchange.epoch;
+    f.authTime = f.serverTime;
+    f.absoluteExpiresAt = 3_500_000;
+    currentTh = th;
+    const info = { serverTime: f.serverTime, absoluteExpiresAt: 3_500_000, idleTimeoutSec: 60 };
+    exchange.response = {
+      ...info,
+      epoch: exchange.epoch,
+      serverFinished: encode(await serverFinished(raw.fkS, { ...info, th, clientFinished: cf })),
+    };
+  };
+  const taFail = (code: string) => utf8ToBytes(JSON.stringify({ error: { code } }));
+  const handleTa = async (context: string, request: Uint8Array): Promise<Uint8Array> => {
+    const body = parseJsonObject(request, "invalid_request");
+    f.taRequests.push({ context, body });
+    const view = (id: string) => {
+      const op = operations.get(id)!;
+      return { operationId: id, ...op, createdAt: 1_791_590_400_000, expiresAt: 1_791_676_800_000 };
+    };
+    if (context === "wake/ta/list") {
+      const value: Record<string, unknown> = { operations: [...operations.keys()].map(view), nextCursor: null };
+      f.taListMutate?.(value);
+      return utf8ToBytes(JSON.stringify(value));
+    }
+    if (context === "wake/ta/get") {
+      const id = body.operationId as string;
+      if (!operations.has(id)) {
+        return taFail("not_found");
+      }
+      const value: Record<string, unknown> = { ...view(id), decidedAt: null };
+      f.taGetMutate?.(value);
+      return utf8ToBytes(JSON.stringify(value));
+    }
+    if (context === "wake/ta/reject") {
+      const id = body.operationId as string;
+      if (!operations.has(id)) {
+        return taFail("not_found");
+      }
+      operations.get(id)!.status = "REJECTED";
+      return utf8ToBytes(JSON.stringify({ result: "rejected", status: "REJECTED" }));
+    }
+    if (context === "wake/ta/challenge") {
+      const id = body.operationId as string;
+      if (!operations.has(id)) {
+        return taFail("not_found");
+      }
+      const approvalId = crypto.getRandomValues(new Uint8Array(16));
+      const approvalNonce = crypto.getRandomValues(new Uint8Array(32));
+      const key = encode(new Bytes(approvalId));
+      let kr: Record<string, unknown> | null = null;
+      let rekey: string | undefined;
+      if (body.rekey === true) {
+        const krPair = await generateEphemeral(false);
+        const krExchangeId = newExchangeId();
+        const nonce = newServerNonce();
+        rekey = encode(krExchangeId);
+        exchanges.set(rekey, { pair: krPair, nonce, prevTh: currentTh, epoch: f.currentEpoch + 1, boundApproval: key });
+        kr = {
+          exchangeId: rekey,
+          epoch: f.currentEpoch + 1,
+          serverNonce: encode(nonce),
+          serverPublicKey: encode(krPair.publicKey),
+        };
+      }
+      approvals.set(key, { operationId: id, nonce: approvalNonce, id: approvalId, rekey });
+      const value: Record<string, unknown> = {
+        approvalId: key,
+        approvalNonce: encode(new Bytes(approvalNonce)),
+        expiresAt: f.serverTime + 300_000,
+        webauthn: { ...f.start.webauthn as Record<string, unknown>, allowCredentials: [{ type: "public-key", id: "AQ" }] },
+        kr,
+      };
+      f.taChallengeMutate?.(value);
+      return utf8ToBytes(JSON.stringify(value));
+    }
+    assert.equal(context, "wake/ta/approve");
+    f.taApproveBodies.push(bytesToUtf8(request));
+    if (f.taApproveError) {
+      return taFail(f.taApproveError);
+    }
+    const approval = approvals.get(body.approvalId as string)!;
+    if (!approval.response) {
+      // The server recomputes ta from ITS OWN approval record and the operationId in the request.
+      const operationId = parseOperationIdHex(body.operationId as string);
+      assert.equal(body.operationId, approval.operationId);
+      const ta = await taBinding({
+        approvalId: asApprovalId(approval.id),
+        operationId,
+        approvalNonce: asApprovalNonce(approval.nonce),
+        sessionId,
+      });
+      const assertion = body.assertion as { response: { clientDataJSON: string } };
+      const clientData = parseJsonObject(
+        decodeBase64urlField(assertion.response.clientDataJSON, "invalid_request"), "invalid_request",
+      );
+      const response: Record<string, unknown> = {
+        operationId: approval.operationId,
+        ta: { result: "approved", status: "APPROVED" },
+        kr: null,
+      };
+      if (body.kr === null) {
+        assert.equal(approval.rekey, undefined);
+        assert.equal(clientData.challenge, encode(await taChallenge(ta)));
+      } else {
+        const kr = body.kr as Record<string, unknown>;
+        assert.equal(kr.exchangeId, approval.rekey);
+        const exchange = exchanges.get(approval.rekey!)!;
+        if (f.taKrResult) {
+          response.kr = { result: f.taKrResult };
+        } else {
+          await commitKr(exchange, { ...kr, assertion: body.assertion }, async (th) => taKrChallenge(th, ta));
+          const value: Record<string, unknown> = { result: "committed", ...exchange.response };
+          f.taApproveKrMutate?.(value);
+          response.kr = value;
+        }
+      }
+      operations.get(approval.operationId)!.status = "APPROVED";
+      approval.response = response;
+    }
+    const value = structuredClone(approval.response);
+    f.taApproveMutate?.(value);
+    return utf8ToBytes(JSON.stringify(value));
   };
   const getAssertion: GetAssertion = async (opts) => {
     f.assertionCalls++;
@@ -237,41 +410,13 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
         } else {
           const body = parseJsonObject(request.toUint8Array(), "invalid_request");
           const exchange = exchanges.get(body.exchangeId as string)!;
-          if (!exchange.response) {
-            const clientPublicKey = await parseEcPublicKey(decodeBase64urlField(body.clientPublicKey, "invalid_request"));
-            const th = await rekeyTranscriptHash({
-              exchangeId: asExchangeId(decodeBase64urlField(body.exchangeId, "invalid_request")),
-              sessionId,
-              epoch: exchange.epoch,
-              prevTh: exchange.prevTh,
-              serverNonce: exchange.nonce,
-              serverPublicKey: exchange.pair.publicKey,
-              clientPublicKey,
-            });
-            const assertion = body.assertion as { response: { clientDataJSON: string } };
-            const clientData = parseJsonObject(
-              decodeBase64urlField(assertion.response.clientDataJSON, "invalid_request"), "invalid_request",
-            );
-            assert.equal(clientData.challenge, encode(await krChallenge(th)));
-            const raw = await deriveKeys(await ecdh(exchange.pair.privateKey, clientPublicKey), th);
-            const cf = asClientFinishedMac(decodeBase64urlField(body.clientFinished, "invalid_request"));
-            assert.equal(await verifyClientFinished(raw.fkC, th, cf), true);
-            epochs.set(exchange.epoch, { c2s: await aesKey(raw.kC2s), s2c: await aesKey(raw.kS2c) });
-            f.currentEpoch = exchange.epoch;
-            f.authTime = f.serverTime;
-            f.absoluteExpiresAt = 3_500_000;
-            currentTh = th;
-            const info = { serverTime: f.serverTime, absoluteExpiresAt: 3_500_000, idleTimeoutSec: 60 };
-            exchange.response = {
-              ...info,
-              epoch: exchange.epoch,
-              serverFinished: encode(await serverFinished(raw.fkS, { ...info, th, clientFinished: cf })),
-            };
-          }
+          await commitKr(exchange, body, async (th) => krChallenge(th));
           const value = { ...exchange.response };
           f.krCompleteMutate?.(value);
           plaintext = utf8ToBytes(JSON.stringify(value));
         }
+      } else if (p.header.context.startsWith("wake/ta/")) {
+        plaintext = await handleTa(p.header.context, request.toUint8Array());
       } else if (p.header.context === "wake/session") {
         assert.equal(bytesToUtf8(request.toUint8Array()), "{}");
         plaintext = utf8ToBytes(JSON.stringify({
@@ -316,7 +461,15 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     if (p.header.context === "wake/kr/complete" && f.krCompleteResponse) {
       return f.krCompleteResponse(f.krCompleteBodies.length, response);
     }
+    if (p.header.context === "wake/ta/approve" && f.taApproveResponse) {
+      return f.taApproveResponse(f.taApproveBodies.length, response);
+    }
     return f.upResponse?.(p.header, response) ?? response;
+  };
+  f.addOperation = async (content: string, nonce = "3f9a1c7e5b2d4f6081a3c5e7092b4d6f") => {
+    const identity = await createOperationIdentity(content, asTaNonce(hex.decode(nonce)));
+    operations.set(identity.operationId, { content, nonce, status: "PENDING" });
+    return identity;
   };
   f.client = new WakeClient({
     baseUrl: "https://example.com/",
