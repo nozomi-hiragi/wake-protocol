@@ -232,6 +232,24 @@ test("ET: POST /api/operations refuses a 21st pending operation per user and cou
   assert.equal((await post("after expiry")).status, 200);
 });
 
+test("ET: concurrent POST /api/operations cannot exceed the per-user cap", async () => {
+  const f = await setup();
+  const create = (client: typeof f.alice.client, content: string) => client.wakeFetch("/api/operations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  const bob = await f.user("u2", "bob");
+  const [responses, bobResponse] = await Promise.all([
+    Promise.all(Array.from({ length: 25 }, (_, i) => create(f.alice.client, `op ${i}`))),
+    create(bob.client, "bob's"),
+  ]);
+  const statuses = responses.map((r) => r.status);
+  assert.equal(statuses.filter((s) => s === 200).length, 20);
+  assert.equal(statuses.filter((s) => s === 409).length, 5);
+  assert.equal(bobResponse.status, 200);
+});
+
 test("ET: invalid input, unknown routes and other users' operations", async () => {
   const f = await setup();
   const { client } = f.alice;

@@ -221,6 +221,8 @@ function decisionRecord(view: OperationView): Record<string, unknown> | undefine
 
 // Demo ET routes (spec §11.5). They are reachable only inside WAKE-ET; auth comes from the in-process object.
 function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: () => number): EtRoute[] {
+  // Per-user tail of the create chain (see POST /api/operations).
+  const creatingByUser = new Map<string, Promise<void>>();
   return [
     {
       method: "GET",
@@ -252,30 +254,44 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
         if (typeof content !== "string") {
           return etError(400, "invalid_request");
         }
-        const pending = await store.listOperations({
-          approverUserId: auth.userId,
-          status: "PENDING",
-          limit: MAX_PENDING_OPERATIONS,
-          now: now(),
-        });
-        if (pending.length >= MAX_PENDING_OPERATIONS) {
-          return etError(409, "too_many_pending");
-        }
-        try {
-          // Demo only: the user requests approval of their own operation. A real app decides content and approver.
-          const created = await getServer().createOperation({
-            content,
+        // The cap check and the create must be atomic per user, or parallel requests could all pass the check.
+        // Creates of one user are chained on a promise so each sees the previous one's result.
+        const previous = creatingByUser.get(auth.userId) ?? Promise.resolve();
+        const run = previous.then(async (): Promise<EtRouteResponse> => {
+          const pending = await store.listOperations({
             approverUserId: auth.userId,
-            expiresAt: now() + OPERATION_LIFETIME_MS,
+            status: "PENDING",
+            limit: MAX_PENDING_OPERATIONS,
+            now: now(),
           });
-          return etJson(200, { operationId: created.operationId, approveUrl: `/approve/${created.operationId}` });
-        } catch (e) {
-          const code = errorCode(e);
-          if (code === "invalid_content" || code === "invalid_request") {
-            return etError(400, code);
+          if (pending.length >= MAX_PENDING_OPERATIONS) {
+            return etError(409, "too_many_pending");
           }
-          throw e;
-        }
+          try {
+            // Demo only: the user requests approval of their own operation. A real app decides content and approver.
+            const created = await getServer().createOperation({
+              content,
+              approverUserId: auth.userId,
+              expiresAt: now() + OPERATION_LIFETIME_MS,
+            });
+            return etJson(200, { operationId: created.operationId, approveUrl: `/approve/${created.operationId}` });
+          } catch (e) {
+            const code = errorCode(e);
+            if (code === "invalid_content" || code === "invalid_request") {
+              return etError(400, code);
+            }
+            throw e;
+          }
+        });
+        // The chain itself never rejects, so one failed request does not poison the next.
+        const tail = run.then(() => undefined, () => undefined);
+        creatingByUser.set(auth.userId, tail);
+        void tail.then(() => {
+          if (creatingByUser.get(auth.userId) === tail) {
+            creatingByUser.delete(auth.userId);
+          }
+        });
+        return run;
       },
     },
     {
