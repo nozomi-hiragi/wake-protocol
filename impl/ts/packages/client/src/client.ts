@@ -156,6 +156,8 @@ const ROTATION_REJECTION_CODES = new Set([
   "rate_limited", "retry", "epoch_retired",
 ]);
 const EMPTY_JSON = utf8ToBytes("{}");
+// Fetch null-body statuses: `new Response(bytes, { status })` throws for these when given a body.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 function encodeBinary(bytes: Bytes): string {
   return base64urlnopad.encode(bytes.toUint8Array());
@@ -765,6 +767,7 @@ export class WakeClient {
    * `path` may carry a query as "path?query"; it is split at the first "?" (an empty query after "?" is allowed).
    * Validation errors are thrown before anything is sent. A string body is UTF-8 encoded. Routing errors from the
    * server arrive as ordinary EtResponses (e.g. 404) and are returned, not thrown.
+   * For 204/205/304 any ET body is not exposed through Response (the Fetch null-body statuses).
    */
   async wakeFetch(path: string, init: WakeFetchInit = {}): Promise<Response> {
     const split = path.indexOf("?");
@@ -790,7 +793,7 @@ export class WakeClient {
     for (const [name, value] of et.headers) {
       out.append(name, value);
     }
-    return new Response(et.body.length === 0 || et.status === 204 || et.status === 304 ? null : new Uint8Array(et.body.toUint8Array()), {
+    return new Response(et.body.length === 0 || NULL_BODY_STATUSES.has(et.status) ? null : new Uint8Array(et.body.toUint8Array()), {
       status: et.status,
       headers: out,
     });

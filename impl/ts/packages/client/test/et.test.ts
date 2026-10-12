@@ -196,3 +196,14 @@ test("accept exact worst-case ET plaintext limit and reject raised body limit wi
   assert.throws(() => new WakeClient({ ...options, etBodyLimit: Number.MAX_SAFE_INTEGER,
     maxPlaintext: Number.MAX_SAFE_INTEGER }), hasCode("invalid_option"));
 });
+
+test("wakeFetch exposes a null body for the 204/205/304 null-body statuses even when the ET body is non-empty", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  for (const status of [204, 205, 304]) {
+    f.etHandler = () => etResponse(status, [], new Uint8Array([1, 2, 3]));
+    const response = await f.client.wakeFetch("/x");
+    assert.equal(response.status, status);
+    assert.equal(response.body, null);
+  }
+});
