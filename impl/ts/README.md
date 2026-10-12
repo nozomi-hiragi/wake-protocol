@@ -87,7 +87,8 @@
 | `server/src/store/types.ts` | §6.5、§7.4、§8.1 ストアのインターフェース |
 | `server/src/store/memory.ts` | §7.4–§7.6、§8.9 メモリのストア |
 | `server/src/testing.ts` | §6 テスト用のソフトウェアのパスキー `SoftAuthenticator` |
-| `client/src/client.ts` | §7.7、§8、§9、§11 `WakeClient`（ログイン、暗号化通信、`rekey`、`wakeFetch`） |
+| `client/src/client.ts` | §7.7、§8、§9、§11 `WakeClient`（ログイン、暗号化通信、`rekey`、`wakeFetch`、ストアの読み直し `reload`） |
+| `client/src/store.ts` | §8.7、§8.11、§9.7 セッションのストア（`memorySessionStore`、`indexedDbSessionStore`） |
 | `client/src/ta.ts` | §10.6、§10.11 `listOperations` / `getOperation` / `approve` / `reject` |
 | `client/src/display.ts` | §10.11 手順5 `hashInput` の表示用の分割（`segmentHashInput`） |
 | `client/src/assertion.ts` | §6.1 ブラウザの `navigator.credentials.get` の呼び出し |
@@ -96,7 +97,7 @@
 | `demo/src/browser/main.ts` | デモの画面（ログイン、セッション、KR、ET、Operation の作成と確認） |
 | `demo/src/browser/approve.ts` | §10.11 の承認画面 |
 | `demo/test/integration.test.ts`、`demo/test/wake.test.ts` | client と server の結合テスト（KX、SM、KR、TA、TA+KR、ET） |
-| `demo/test/e2e/login.spec.ts`、`demo/test/e2e/operations.spec.ts` | Chromium の仮想認証器を使う e2e |
+| `demo/test/e2e/login.spec.ts`、`demo/test/e2e/operations.spec.ts`、`demo/test/e2e/multi-tab.spec.ts` | Chromium の仮想認証器を使う e2e（`multi-tab.spec.ts` は2タブでのログインの共有） |
 
 `npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import でき、宣言はパッケージ自身の `devDependencies` にだけできます。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
 
@@ -111,9 +112,16 @@ npm run typecheck
 npm test          # 依存の検査、テストベクターの照合、node:crypto との突き合わせ、往復テスト、client と server の結合テスト
 npm run vectors   # spec/test-vectors/*.json を再生成
 npx playwright install chromium   # 初回だけ。e2e 用のブラウザ
-npm run e2e       # demo の e2e（登録、ログイン、ログアウト、KR、Operation の承認・拒否、TA+KR）
+npm run e2e       # demo の e2e（登録、ログイン、ログアウト、KR、Operation の承認・拒否、TA+KR、タブ間のログインの共有）
 npm start         # デモを http://localhost:8787 で起動（手元のパスキーで試せる）
 ```
+
+### デモでタブ間のログインを試す
+
+1. `npm start` で起動し、http://localhost:8787 でパスキーを登録してログインします。
+2. Operation を作り、「Open approve page」のリンクを新しいタブで開きます。承認ページはログインし直さずに Operation を読み込みます。両方のページの `session:` の行に、同じセッション ID とエポックが出ます。
+3. 承認ページで「Approve + rekey」を押すと、元のタブの表示も、読み込み直さずに新しいエポックに変わります。「Who am I (ET)」も新しいエポックを返します。
+4. どちらかのタブでログアウトすると、もう一方も `logged out` になります。
 
 ### サーバーとクライアント
 
@@ -131,9 +139,12 @@ const response = await wake.handle(request);
 ```
 
 ```ts
-import { WakeClient, navigatorGetAssertion } from "@wake-protocol/client";
+import { WakeClient, indexedDbSessionStore, navigatorGetAssertion } from "@wake-protocol/client";
 
-const client = new WakeClient({ baseUrl: "", getAssertion: navigatorGetAssertion });
+const store = indexedDbSessionStore(); // 省略するとメモリだけ（タブごとにログイン）
+const client = new WakeClient({ baseUrl: "", getAssertion: navigatorGetAssertion, store });
+await client.reload();               // 別のタブのログインがあれば使う（currentSession で確かめる）
+store.subscribe(() => void client.reload()); // 別のタブの変更を反映する
 await client.login({ mode: "discoverable" });
 const info = await client.session(); // wake/session
 await client.rekey();                // WAKE-KR（§9）
@@ -148,7 +159,13 @@ await client.logout();               // wake/logout
 
 - credential の公開鍵は SPKI（ブラウザの `getPublicKey()` の値）で保存します。対応する署名方式は ES256 だけです。
 - 交換・セッションのストアは非同期のインターフェース（`WakeStore`）で、仮実装にはメモリのもの（`MemoryWakeStore`）だけがあります。鍵はプロセスのメモリに抽出不可の `CryptoKey` で置きます。DB に保存する場合は §8.10 の鍵の保護が必要です。`MemoryWakeStore` は交換を作るときに一定間隔（既定60秒）で期限切れの交換と終了したセッションを掃除します。要求が来ない間も掃除したい場合は、使う側が `sweep(now)` を定期的に呼びます。
-- クライアントの鍵はメモリにだけ置きます（IndexedDB、Web Locks、BroadcastChannel は使いません。§8.11、§9.7 の複数タブの協調は未実装）。ページを読み込み直すと、もう一度ログインが必要です。
+- クライアントの鍵は `store` に置きます（§8.11）。既定はインスタンスごとのメモリのストアで、ページを読み込み直すと、もう一度ログインが必要です。
+- `indexedDbSessionStore()` を渡すと、同じオリジンのタブでログインを共有します。
+  - 抽出不可の `CryptoKey` を IndexedDB に Structured Clone で保存します。保存するのは `sessionId`、今の鍵世代（`k_c2s`、`k_s2c`、`th`）、時刻の offset、`baseUrl`、期限、KR 中の保留世代です。
+  - `BroadcastChannel` は「変わった」という通知だけを運び、鍵や状態は運びません。受け取った側は IndexedDB を読み直します。
+  - KR と TA+KR は Web Locks（`wake-kr:<sessionId>`）で1タブに限ります。ほかのタブが KR 中なら、待たずに `conflict` を返します（2つめの WebAuthn を出さないため）。
+  - 自動では読み直しません。ページの読み込み時、`visibilitychange`・`focus` のとき、`store.subscribe` の通知のときに `reload()` を呼びます（demo の `common.ts`）。今の世代が `epoch_retired` で拒否されたときは、クライアントが自分で読み直します。
+  - IndexedDB を使えない環境では、メモリのストアになります。
 - §14.3 のレート制限は実装していません。本番で使わないでください。
 - `MemoryWakeStore` は、確定した Operation を監査のために消しません（PENDING のまま期限が切れたものも残ります）。長く動かすとメモリが増え続けます。
 - demo の `POST /api/operations` は、利用者が `content` を指定して自分宛ての Operation を作れる**デモ専用**の API です。§10.2 の「Operation は実装者のサーバーからだけ作成できる」から外れているので、実際のサービスでは、サーバーが業務の要求から `content` と認否者を決めてください。ユーザーごとの PENDING な Operation は20件までにしています。

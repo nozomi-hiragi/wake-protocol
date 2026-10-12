@@ -29,6 +29,12 @@
 - 仮実装 M3: WAKE-TA と TA+KR（§10）を追加。server に Operation の作成・取消・取得と認否記録（付録C の形式での書き出しを含む）、`wake/ta/list`・`get`・`challenge`・`approve`・`reject`。client に §10.11 の検査つきの取得と承認、承認画面の表示用の `segmentHashInput`。core に認否記録の検証 `verifyApprovalBundle`
 - 仮実装 M3: WAKE-ET（§11）を追加。server に `/wake/transport` と完全一致のルート登録、client に `wakeFetch`
 - 仮実装 M3: demo に KR・TA・ET の画面、承認画面、結合テストと e2e を追加
+- client に複数タブでのセッションの共有（§8.11、§9.7）を追加。`WakeClient` の `store` オプションに `SessionStore` を渡すと、ログイン、鍵世代の切り替え、ログアウトをタブ間で共有する。既定はインスタンスごとのメモリのストアで、これまでと同じ動き（ページの読み込みごとにログイン）
+  - `indexedDbSessionStore()`: IndexedDB を正とし、`BroadcastChannel` は変更の通知だけに使う。KR の排他は Web Locks（`wake-kr:<sessionId>`、待たずに `conflict`）。IndexedDB を使えない環境ではメモリのストアになる
+  - `memorySessionStore()`: 同じプロセスの複数の `WakeClient` で共有できるストア（テストや Node 用）
+  - `reload()` と `currentSession` を追加。ストアを読み直し、別のタブが確定した世代に切り替える。今の世代が `epoch_retired` で拒否されたときも読み直し、新しい世代で1回だけ送り直す。保存された保留世代があれば、§9.6 の手順で `wake/session` を送って回復する
+  - 暗号化の回数は、ストアの共有カウンターからブロック単位（既定4096回、`encryptionBlockSize`）で予約し、`maxEncryptionsPerKey` をタブ全体で守る（§8.7）
+- demo の画面がタブ間でログインを共有する。承認ページはログインし直さずに Operation を読み込み、両方のページにセッション ID とエポックを表示する。e2e に2タブのテストを追加
 - `@wake-protocol/server` のストアの破壊的変更（M2 からの移行）: 自作のストアは次を実装する必要がある。`createWakeServer` は足りないメソッドがあると `invalid_option` を投げる
   - `CredentialStore`: 旧 `getCredential` / `findUserByUsername` / `compareAndSetSignCount` / `updateSignCount`。新 `findUserCredentials(userId): Promise<WakeCredential[]>` を追加（KR・TA の `allowCredentials` 用。ユーザーのすべての credential を返し、サーバーが active のものに絞る）
   - `WakeStore`: 新 `createRekey` / `commitRekey` / `supersedeExchange`（KR）、`createOperation` / `getOperation` / `listOperations` / `cancelOperation` / `rejectOperation` / `createApproval` / `getApproval` / `commitApproval`（TA）を追加。`commitRekey` と `commitApproval` は M2 の `commitLogin` と同じく、条件の確認と書き込みを1つの原子的操作で行う。`clearSignCountUpdate(id)` は交換 ID に加えて承認試行の ID も受け取る
