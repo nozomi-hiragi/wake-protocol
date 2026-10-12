@@ -6,12 +6,22 @@ import { start } from "./kx/start.ts";
 import { checkOptions } from "./options.ts";
 import type { WakeServerOptions } from "./options.ts";
 import { up } from "./sm/up.ts";
+import { cancelOperation, createOperation, exportApprovalBundle, getOperation } from "./ta/operations.ts";
+import type { CreatedOperation, CreateOperationInput, OperationView } from "./ta/operations.ts";
 
 export interface WakeServer {
   handle(req: Request): Promise<Response | null>;
   revokeSession(sessionId: Uint8Array): Promise<void>;
   revokeSessionsByUser(userId: string): Promise<void>;
   revokeSessionsByCredential(credentialId: Uint8Array): Promise<void>;
+  /** §10.2. Throws WakeError invalid_content (profile) or invalid_request (approverUserId, expiresAt). */
+  createOperation(input: CreateOperationInput): Promise<CreatedOperation>;
+  /** §10.9. Throws WakeError not_found for an unknown operation. */
+  cancelOperation(operationId: string): Promise<"cancelled" | "already_decided" | "expired">;
+  /** §10.10. Null for an unknown operation. */
+  getOperation(operationId: string): Promise<OperationView | null>;
+  /** Appendix C document for an APPROVED operation (SPKI instead of COSE_Key), else null. */
+  exportApprovalBundle(operationId: string): Promise<Record<string, unknown> | null>;
 }
 
 export function createWakeServer(options: WakeServerOptions): WakeServer {
@@ -49,5 +59,9 @@ export function createWakeServer(options: WakeServerOptions): WakeServer {
     revokeSession: sessionId => config.store.revokeSession(sessionId),
     revokeSessionsByUser: userId => config.store.revokeSessionsByUser(userId),
     revokeSessionsByCredential: credentialId => config.store.revokeSessionsByCredential(credentialId),
+    createOperation: input => createOperation(input, config),
+    cancelOperation: operationId => cancelOperation(operationId, config),
+    getOperation: operationId => getOperation(operationId, config),
+    exportApprovalBundle: operationId => exportApprovalBundle(operationId, config),
   };
 }

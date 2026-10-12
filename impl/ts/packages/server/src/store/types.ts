@@ -11,6 +11,7 @@ import type {
   LoginTranscriptHash,
   RekeyTranscriptHash,
   ApprovalId,
+  ApprovalNonce,
 } from "@wake-protocol/core";
 
 export interface WakeCredential {
@@ -135,6 +136,110 @@ export interface RekeyCommit {
 export type RekeyStartResult = "created" | "conflict" | "reauth";
 export type RekeyCommitResult = "committed" | "conflict" | "expired" | "reauth";
 
+export type OperationStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+
+/** Authentication record kept for an APPROVED operation (§10.10); byte fields are exactly as received. */
+export interface ApprovalDecision {
+  kind: "approved";
+  decidedAt: number;
+  decidedByUserId: string;
+  decidedByCredentialId: Uint8Array;
+  /** SPKI of the approving credential at decision time, so the record stays verifiable after credential changes. */
+  credentialPublicKey: Uint8Array;
+  sessionId: Uint8Array;
+  approvalId: Uint8Array;
+  approvalNonce: Uint8Array;
+  /** Only for TA+KR. */
+  th: Uint8Array | null;
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
+}
+
+export interface RejectDecision {
+  kind: "rejected";
+  decidedAt: number;
+  decidedByUserId: string;
+  sessionId: Uint8Array;
+}
+
+export interface CancelDecision {
+  kind: "cancelled";
+  decidedAt: number;
+  decidedBy: "server";
+}
+
+export type OperationDecision = ApprovalDecision | RejectDecision | CancelDecision;
+
+/** content, nonce and approverUserId never change after creation (§10.2). operationId is 64 lowercase hex characters. */
+export interface OperationRecord {
+  operationId: string;
+  content: string;
+  /** 32 lowercase hex characters. */
+  nonce: string;
+  approverUserId: string;
+  /** EXPIRED is derived on read from a PENDING record whose expiresAt has passed. */
+  status: OperationStatus;
+  createdAt: number;
+  expiresAt: number;
+  decision?: OperationDecision;
+}
+
+export interface OperationQuery {
+  approverUserId: string;
+  status?: OperationStatus;
+  limit: number;
+  /** Exclusive position in (createdAt, operationId) order. */
+  after?: { createdAt: number; operationId: string; };
+  now: number;
+}
+
+/** A single-use approval attempt (§10.7, Appendix A). The result is the JSON text of the approve response. */
+export interface ApprovalRecord {
+  approvalId: ApprovalId;
+  /** 64 lowercase hex characters. */
+  operationId: string;
+  sessionId: SessionId;
+  approvalNonce: ApprovalNonce;
+  krExchangeId?: ExchangeId;
+  state: "PENDING" | "CONSUMED" | "EXPIRED";
+  result?: string;
+  createdAt: number;
+  expiresAt: number;
+  signCountUpdate?: SignCountUpdate;
+}
+
+export interface ApprovalStart {
+  attempt: ApprovalRecord;
+  /** Creates the bound rekey exchange together with the attempt. */
+  rekey: RekeyStart | null;
+  maxActiveApprovals: number;
+  now: number;
+}
+
+export type ApprovalStartResult = "created" | "not_found" | "already_decided" | "expired" | "conflict" | "reauth";
+
+export type ApprovalTaOutcome = "approved" | "already_decided" | "expired";
+export type ApprovalKrOutcome = "committed" | "conflict" | "expired";
+
+export interface ApprovalCommit {
+  approvalId: Uint8Array;
+  operationId: string;
+  sessionId: Uint8Array;
+  now: number;
+  /** Everything of the decision record except decidedAt, which the store sets from now. */
+  record: Omit<ApprovalDecision, "kind" | "decidedAt">;
+  /** rekey is null when the exchange could no longer be used (not PENDING or expired) at verification time. */
+  kr: { exchangeId: Uint8Array; rekey: RekeyCommit | null; } | null;
+  /** Builds the response JSON text from the decided outcomes. Must be pure and synchronous. */
+  result: (ta: ApprovalTaOutcome, kr: ApprovalKrOutcome | null, status: OperationStatus) => string;
+  signCountUpdate?: SignCountUpdate;
+}
+
+export type ApprovalCommitResult =
+  | { state: "committed" | "consumed"; response: string; }
+  | { state: "expired" | "reauth"; };
+
 /**
  * All conditional methods must be atomic across store instances. Persistent stores
  * must protect keys with a separate KEK and AAD (§8.10):
@@ -152,7 +257,7 @@ export interface WakeStore {
   supersedeExchange(exchangeId: Uint8Array): Promise<void>;
   commitLogin(commit: LoginCommit): Promise<boolean>;
   /**
-   * Clears the pending counter update of a committed exchange. Returns true only for the caller
+   * Clears the pending counter update of a committed exchange or consumed approval attempt (by its id). Returns true only for the caller
    * that actually cleared it, so the anomaly notification fires at most once.
    */
   clearSignCountUpdate(exchangeId: Uint8Array): Promise<boolean>;
@@ -167,4 +272,31 @@ export interface WakeStore {
   revokeSessionsByUser(userId: string): Promise<void>;
   revokeSessionsByCredential(credentialId: Uint8Array): Promise<void>;
   sweep(now: number): Promise<void>;
+  /** Returns false when operationId already exists; the caller then generates a new nonce (§10.2). */
+  createOperation(record: OperationRecord): Promise<boolean>;
+  /** Reports status EXPIRED for a PENDING operation at or past expiresAt. */
+  getOperation(operationId: string, now: number): Promise<OperationRecord | null>;
+  /** Ordered by (createdAt, operationId); returns at most query.limit records. */
+  listOperations(query: OperationQuery): Promise<OperationRecord[]>;
+  /** PENDING and expiresAt > now becomes CANCELLED. */
+  cancelOperation(operationId: string, now: number): Promise<"cancelled" | "already_decided" | "expired" | "not_found">;
+  /** Only the approver may reject (others get not_found). PENDING and expiresAt > now becomes REJECTED. */
+  rejectOperation(
+    operationId: string,
+    userId: string,
+    sessionId: Uint8Array,
+    now: number,
+  ): Promise<"rejected" | "already_decided" | "expired" | "not_found">;
+  /**
+   * Atomically checks the session and operation, creates the optional bound rekey exchange, expires the oldest
+   * attempts beyond maxActiveApprovals and inserts the attempt.
+   */
+  createApproval(start: ApprovalStart): Promise<ApprovalStartResult>;
+  /** Reports state EXPIRED for a PENDING attempt at or past expiresAt. */
+  getApproval(approvalId: Uint8Array, now: number): Promise<ApprovalRecord | null>;
+  /**
+   * §10.7 steps (1)–(4) in one atomic operation: consumes the attempt, decides the operation, applies the optional
+   * rekey independently, and stores the result on the attempt.
+   */
+  commitApproval(commit: ApprovalCommit): Promise<ApprovalCommitResult>;
 }

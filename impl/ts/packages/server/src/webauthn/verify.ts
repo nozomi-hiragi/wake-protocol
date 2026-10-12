@@ -34,6 +34,10 @@ export interface VerifiedAssertion {
   signCount: number;
   origin: string;
   counterAnomaly: boolean;
+  /** The received bytes, kept for the TA decision record (§10.10). */
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
 }
 
 // §6.2 steps 1–3: client data, challenge and origin.
@@ -158,7 +162,7 @@ async function verify(
   checkUser(response.userHandle, credential, ceremony);
   const signCount = new DataView(authData.buffer, authData.byteOffset + 33, 4).getUint32(0, false);
   const counterAnomaly = checkCounter(credential, signCount);
-  return { credential, signCount, origin, counterAnomaly };
+  return { credential, signCount, origin, counterAnomaly, authenticatorData: authData, clientDataJSON: clientData, signature };
 }
 
 export async function verifyAssertion(

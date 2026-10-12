@@ -2,7 +2,17 @@
 import { base64urlnopad } from "@scure/base";
 import { sessionExpired } from "../sm/lifetime.ts";
 import type {
+  ApprovalCommit,
+  ApprovalCommitResult,
+  ApprovalKrOutcome,
+  ApprovalRecord,
+  ApprovalStart,
+  ApprovalStartResult,
+  ApprovalTaOutcome,
   CredentialStore,
+  OperationDecision,
+  OperationQuery,
+  OperationRecord,
   ExchangeRecord,
   LoginCommit,
   RekeyStart,
@@ -37,6 +47,45 @@ function cloneExchange(e: ExchangeRecord): ExchangeRecord {
     ...(e.signCountUpdate ? { signCountUpdate: cloneUpdate(e.signCountUpdate) } : {}),
     ...(e.reauthenticatedCredentialId ? { reauthenticatedCredentialId: e.reauthenticatedCredentialId.slice() } : {}),
   };
+}
+
+function cloneDecision(d: OperationDecision): OperationDecision {
+  switch (d.kind) {
+    case "approved":
+      return {
+        ...d,
+        decidedByCredentialId: d.decidedByCredentialId.slice(),
+        credentialPublicKey: d.credentialPublicKey.slice(),
+        sessionId: d.sessionId.slice(),
+        approvalId: d.approvalId.slice(),
+        approvalNonce: d.approvalNonce.slice(),
+        th: d.th ? d.th.slice() : null,
+        authenticatorData: d.authenticatorData.slice(),
+        clientDataJSON: d.clientDataJSON.slice(),
+        signature: d.signature.slice(),
+      };
+    case "rejected":
+      return { ...d, sessionId: d.sessionId.slice() };
+    case "cancelled":
+      return { ...d };
+  }
+}
+
+function cloneOperation(o: OperationRecord): OperationRecord {
+  return { ...o, ...(o.decision ? { decision: cloneDecision(o.decision) } : {}) };
+}
+
+function cloneApproval(a: ApprovalRecord): ApprovalRecord {
+  return { ...a, ...(a.signCountUpdate ? { signCountUpdate: cloneUpdate(a.signCountUpdate) } : {}) };
+}
+
+/** Reports a PENDING operation past its expiresAt as EXPIRED without changing the stored record. */
+function operationView(o: OperationRecord, now: number): OperationRecord {
+  const view = cloneOperation(o);
+  if (view.status === "PENDING" && now >= view.expiresAt) {
+    view.status = "EXPIRED";
+  }
+  return view;
 }
 
 function cloneSession(s: SessionRecord): SessionRecord {
@@ -158,6 +207,11 @@ export class MemoryWakeStore implements WakeStore {
   // PENDING exchange keys per session key, so revocation does not scan every exchange.
   #pending = new Map<string, Set<string>>();
   #sessions = new Map<string, SessionRecord>();
+  #operations = new Map<string, OperationRecord>();
+  #approvals = new Map<string, ApprovalRecord>();
+  // PENDING approval keys per operation and per session.
+  #activeByOperation = new Map<string, Set<string>>();
+  #activeBySession = new Map<string, Set<string>>();
   #retention: number;
   #endedRetention: number;
   #sweepInterval: number;
@@ -268,6 +322,10 @@ export class MemoryWakeStore implements WakeStore {
 
   async createRekey(c: RekeyStart): Promise<RekeyStartResult> {
     this.#opportunisticSweep(c.now);
+    return this.#createRekey(c);
+  }
+
+  #createRekey(c: RekeyStart): RekeyStartResult {
     const s = this.#activeSession(id(c.record.sessionId.toUint8Array()), c.now);
     if (!s || !s.currentKeys) {
       return "reauth";
@@ -311,6 +369,10 @@ export class MemoryWakeStore implements WakeStore {
   }
 
   async commitRekey(c: RekeyCommit): Promise<RekeyCommitResult> {
+    return this.#commitRekey(c);
+  }
+
+  #commitRekey(c: RekeyCommit): RekeyCommitResult {
     const key = id(c.exchangeId);
     const ex = this.#readExchange(key, c.now);
     const s = this.#activeSession(id(c.sessionId), c.now);
@@ -347,11 +409,11 @@ export class MemoryWakeStore implements WakeStore {
   }
 
   async clearSignCountUpdate(exchangeId: Uint8Array): Promise<boolean> {
-    const ex = this.#exchanges.get(id(exchangeId));
-    if (!ex?.signCountUpdate) {
+    const holder = this.#exchanges.get(id(exchangeId)) ?? this.#approvals.get(id(exchangeId));
+    if (!holder?.signCountUpdate) {
       return false;
     }
-    delete ex.signCountUpdate;
+    delete holder.signCountUpdate;
     return true;
   }
 
@@ -396,11 +458,22 @@ export class MemoryWakeStore implements WakeStore {
     }
   }
 
+  /** §8.9 step 3: a terminal session's PENDING approval attempts become unusable. */
+  #invalidateApprovals(s: SessionRecord): void {
+    for (const key of [...this.#activeBySession.get(id(s.sessionId.toUint8Array())) ?? []]) {
+      const att = this.#approvals.get(key);
+      if (att) {
+        this.#settleApproval(key, att, "EXPIRED");
+      }
+    }
+  }
+
   /** Marks the session terminal, remembering when it ended for the retention sweep. */
   #end(s: SessionRecord, status: "REVOKED" | "EXPIRED", now: number): void {
     s.status = status;
     s.endedAt ??= now;
     this.#invalidateExchanges(s);
+    this.#invalidateApprovals(s);
   }
 
   #deleteKeys(s: SessionRecord): void {
@@ -470,6 +543,9 @@ export class MemoryWakeStore implements WakeStore {
     for (const key of [...this.#exchanges.keys()]) {
       this.#readExchange(key, now);
     }
+    for (const key of [...this.#approvals.keys()]) {
+      this.#readApproval(key, now);
+    }
     for (const [key, s] of [...this.#sessions]) {
       if (s.status === "ACTIVE" && sessionExpired(s, now)) {
         this.#end(s, "EXPIRED", now);
@@ -483,5 +559,221 @@ export class MemoryWakeStore implements WakeStore {
         this.#sessions.delete(key);
       }
     }
+  }
+
+  async createOperation(record: OperationRecord): Promise<boolean> {
+    if (this.#operations.has(record.operationId)) {
+      return false;
+    }
+    this.#operations.set(record.operationId, cloneOperation(record));
+    return true;
+  }
+
+  async getOperation(operationId: string, now: number): Promise<OperationRecord | null> {
+    const op = this.#operations.get(operationId);
+    return op ? operationView(op, now) : null;
+  }
+
+  async listOperations(q: OperationQuery): Promise<OperationRecord[]> {
+    return [...this.#operations.values()]
+      .filter(op => op.approverUserId === q.approverUserId)
+      .filter(op => q.status === undefined || operationView(op, q.now).status === q.status)
+      .sort((a, b) => a.createdAt - b.createdAt || (a.operationId < b.operationId ? -1 : a.operationId > b.operationId ? 1 : 0))
+      .filter(op => !q.after || op.createdAt > q.after.createdAt ||
+        (op.createdAt === q.after.createdAt && op.operationId > q.after.operationId))
+      .slice(0, q.limit)
+      .map(op => operationView(op, q.now));
+  }
+
+  /** Common guard of every decision: PENDING and not past expiresAt (§10.9). */
+  #decidable(op: OperationRecord, now: number): "ok" | "already_decided" | "expired" {
+    if (op.status !== "PENDING") {
+      return "already_decided";
+    }
+    return now >= op.expiresAt ? "expired" : "ok";
+  }
+
+  async cancelOperation(operationId: string, now: number): Promise<"cancelled" | "already_decided" | "expired" | "not_found"> {
+    const op = this.#operations.get(operationId);
+    if (!op) {
+      return "not_found";
+    }
+    const guard = this.#decidable(op, now);
+    if (guard !== "ok") {
+      return guard;
+    }
+    op.status = "CANCELLED";
+    op.decision = { kind: "cancelled", decidedAt: now, decidedBy: "server" };
+    return "cancelled";
+  }
+
+  async rejectOperation(
+    operationId: string,
+    userId: string,
+    sessionId: Uint8Array,
+    now: number,
+  ): Promise<"rejected" | "already_decided" | "expired" | "not_found"> {
+    const op = this.#operations.get(operationId);
+    if (!op || op.approverUserId !== userId) {
+      return "not_found";
+    }
+    const guard = this.#decidable(op, now);
+    if (guard !== "ok") {
+      return guard;
+    }
+    op.status = "REJECTED";
+    op.decision = { kind: "rejected", decidedAt: now, decidedByUserId: userId, sessionId: sessionId.slice() };
+    return "rejected";
+  }
+
+  /** Leaves PENDING: updates the indexes, and supersedes a still pending bound exchange when the attempt expires. */
+  #settleApproval(key: string, att: ApprovalRecord, state: ApprovalRecord["state"]): void {
+    att.state = state;
+    const owners = [
+      [this.#activeByOperation, att.operationId],
+      [this.#activeBySession, id(att.sessionId.toUint8Array())],
+    ] as const;
+    for (const [index, owner] of owners) {
+      const keys = index.get(owner);
+      keys?.delete(key);
+      if (keys?.size === 0) {
+        index.delete(owner);
+      }
+    }
+    if (state === "EXPIRED" && att.krExchangeId) {
+      this.#supersedeBound(att.krExchangeId.toUint8Array());
+    }
+  }
+
+  #supersedeBound(exchangeId: Uint8Array): void {
+    const key = id(exchangeId);
+    const ex = this.#exchanges.get(key);
+    if (ex?.state === "PENDING") {
+      this.#settle(key, ex, "SUPERSEDED");
+    }
+  }
+
+  #readApproval(key: string, now: number): ApprovalRecord | null {
+    const att = this.#approvals.get(key);
+    if (!att) {
+      return null;
+    }
+    if (att.state === "PENDING" && now >= att.expiresAt) {
+      this.#settleApproval(key, att, "EXPIRED");
+    }
+    if (att.state !== "PENDING" && now >= att.expiresAt + this.#retention) {
+      this.#approvals.delete(key);
+      return null;
+    }
+    return att;
+  }
+
+  async getApproval(approvalId: Uint8Array, now: number): Promise<ApprovalRecord | null> {
+    const att = this.#readApproval(id(approvalId), now);
+    return att ? cloneApproval(att) : null;
+  }
+
+  async createApproval(c: ApprovalStart): Promise<ApprovalStartResult> {
+    this.#opportunisticSweep(c.now);
+    const att = c.attempt;
+    const sessionKey = id(att.sessionId.toUint8Array());
+    const key = id(att.approvalId.toUint8Array());
+    if (
+      att.state !== "PENDING" || this.#approvals.has(key) ||
+      (c.rekey !== null) !== (att.krExchangeId !== undefined) ||
+      (c.rekey !== null && (
+        !c.rekey.record.exchangeId.equals(att.krExchangeId!) || !c.rekey.record.boundApprovalId?.equals(att.approvalId)
+      ))
+    ) {
+      throw new TypeError("invalid approval attempt");
+    }
+    const s = this.#activeSession(sessionKey, c.now);
+    if (!s || !s.currentKeys) {
+      return "reauth";
+    }
+    const op = this.#operations.get(att.operationId);
+    if (!op || op.approverUserId !== s.userId) {
+      return "not_found";
+    }
+    const guard = this.#decidable(op, c.now);
+    if (guard !== "ok") {
+      return guard;
+    }
+    if (c.rekey) {
+      const created = this.#createRekey(c.rekey);
+      if (created !== "created") {
+        return created;
+      }
+    }
+    const active = [...this.#activeByOperation.get(att.operationId) ?? []]
+      .map(k => ({ key: k, att: this.#readApproval(k, c.now) }))
+      .filter((entry): entry is { key: string; att: ApprovalRecord } => entry.att?.state === "PENDING")
+      .sort((a, b) => a.att.createdAt - b.att.createdAt);
+    while (active.length >= c.maxActiveApprovals) {
+      const oldest = active.shift()!;
+      this.#settleApproval(oldest.key, oldest.att, "EXPIRED");
+    }
+    this.#approvals.set(key, cloneApproval(att));
+    for (const [index, owner] of [[this.#activeByOperation, att.operationId], [this.#activeBySession, sessionKey]] as const) {
+      const keys = index.get(owner) ?? new Set<string>();
+      keys.add(key);
+      index.set(owner, keys);
+    }
+    return "created";
+  }
+
+  #decideOperation(op: OperationRecord, c: ApprovalCommit): ApprovalTaOutcome {
+    const guard = this.#decidable(op, c.now);
+    if (guard !== "ok") {
+      return guard;
+    }
+    op.status = "APPROVED";
+    op.decision = cloneDecision({ kind: "approved", decidedAt: c.now, ...c.record }) as OperationDecision;
+    return "approved";
+  }
+
+  #applyBoundRekey(c: ApprovalCommit, att: ApprovalRecord): ApprovalKrOutcome | null {
+    if (!c.kr) {
+      // A TA-only approval on an attempt that offered a rekey: the offered exchange is not used.
+      if (att.krExchangeId) {
+        this.#supersedeBound(att.krExchangeId.toUint8Array());
+      }
+      return null;
+    }
+    const ex = this.#readExchange(id(c.kr.exchangeId), c.now);
+    if (!c.kr.rekey || !ex || ex.boundApprovalId === undefined || !ex.boundApprovalId.equals(att.approvalId)) {
+      return "expired";
+    }
+    const result = this.#commitRekey(c.kr.rekey);
+    return result === "committed" || result === "conflict" ? result : "expired";
+  }
+
+  async commitApproval(c: ApprovalCommit): Promise<ApprovalCommitResult> {
+    const sessionKey = id(c.sessionId);
+    const s = this.#activeSession(sessionKey, c.now);
+    if (!s || !s.currentKeys) {
+      return { state: "reauth" };
+    }
+    const key = id(c.approvalId);
+    const att = this.#readApproval(key, c.now);
+    if (!att || id(att.sessionId.toUint8Array()) !== sessionKey || att.operationId !== c.operationId) {
+      return { state: "expired" };
+    }
+    if (att.state === "CONSUMED") {
+      return { state: "consumed", response: att.result ?? "{}" };
+    }
+    const op = this.#operations.get(att.operationId);
+    if (att.state !== "PENDING" || !op) {
+      return { state: "expired" };
+    }
+    // (1)-(4) of §10.7 run without yielding, so the three parts are decided against one consistent state.
+    this.#settleApproval(key, att, "CONSUMED");
+    const ta = this.#decideOperation(op, c);
+    const kr = this.#applyBoundRekey(c, att);
+    att.result = c.result(ta, kr, ta === "expired" ? "EXPIRED" : op.status);
+    if (c.signCountUpdate) {
+      att.signCountUpdate = cloneUpdate(c.signCountUpdate);
+    }
+    return { state: "committed", response: att.result };
   }
 }

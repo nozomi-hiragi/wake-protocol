@@ -1,57 +1,65 @@
-// Spec §9.2, §9.4: reserve a session-bound rekey exchange with atomic pending-limit eviction.
+// Spec §9.2, §9.4, §10.6: reserve a session-bound rekey exchange with atomic pending-limit eviction.
 import { base64urlnopad } from "@scure/base";
 import { generateEphemeral, newExchangeId, newServerNonce, WakeError } from "@wake-protocol/core";
+import type { ApprovalId } from "@wake-protocol/core";
 import type { ServerOptions } from "../options.ts";
-import type { SessionRecord } from "../store/types.ts";
+import type { ExchangeRecord, RekeyStart, SessionRecord } from "../store/types.ts";
+import { sessionWebauthnOptions } from "../webauthn/options.ts";
 
-export async function startRekey(session: SessionRecord, options: ServerOptions): Promise<unknown> {
+/** Builds a PENDING rekey exchange for the session's next epoch, optionally bound to a TA approval attempt (§10.8). */
+export async function prepareRekey(
+  session: SessionRecord,
+  options: ServerOptions,
+  boundApprovalId?: ApprovalId,
+): Promise<RekeyStart> {
   if (!session.currentKeys || session.currentEpoch === 0xffffffff) {
     throw new WakeError("reauth");
   }
-  const credentials = await options.credentials.findUserCredentials(session.userId);
   const ephemeral = await generateEphemeral();
-  const exchangeId = newExchangeId();
-  const serverNonce = newServerNonce();
   const now = options.now();
   const expiresAt = now + options.exchangeTtlMs;
   if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
     throw new RangeError("exchange expiration");
   }
-  const epoch = session.currentEpoch + 1;
-  const result = await options.store.createRekey({
-    record: {
-      exchangeId,
-      sessionId: session.sessionId,
-      kind: "rekey",
-      state: "PENDING",
-      mode: "discoverable",
-      targetEpoch: epoch,
-      prevTh: session.currentKeys.th,
-      createdAt: now,
-      serverNonce,
-      serverPublicKey: ephemeral.publicKey,
-      serverPrivateKey: ephemeral.privateKey,
-      expiresAt,
-    },
-    expectedEpoch: session.currentEpoch,
-    now,
-    maxPendingRekeys: options.maxPendingRekeys,
-  });
+  const record: ExchangeRecord = {
+    exchangeId: newExchangeId(),
+    sessionId: session.sessionId,
+    kind: "rekey",
+    state: "PENDING",
+    mode: "discoverable",
+    targetEpoch: session.currentEpoch + 1,
+    prevTh: session.currentKeys.th,
+    createdAt: now,
+    serverNonce: newServerNonce(),
+    serverPublicKey: ephemeral.publicKey,
+    serverPrivateKey: ephemeral.privateKey,
+    expiresAt,
+    ...(boundApprovalId ? { boundApprovalId } : {}),
+  };
+  return { record, expectedEpoch: session.currentEpoch, now, maxPendingRekeys: options.maxPendingRekeys };
+}
+
+/** The exchange members shared by wake/kr/start and wake/ta/challenge. */
+export function rekeyOffer(record: ExchangeRecord): Record<string, unknown> {
+  return {
+    exchangeId: base64urlnopad.encode(record.exchangeId.toUint8Array()),
+    epoch: record.targetEpoch,
+    serverNonce: base64urlnopad.encode(record.serverNonce.toUint8Array()),
+    serverPublicKey: base64urlnopad.encode(record.serverPublicKey.toUint8Array()),
+  };
+}
+
+export async function startRekey(session: SessionRecord, options: ServerOptions): Promise<unknown> {
+  // The credential lookup comes first so the clock is read after any delay it causes.
+  const webauthn = await sessionWebauthnOptions(session, options);
+  const start = await prepareRekey(session, options);
+  const result = await options.store.createRekey(start);
   if (result !== "created") {
     throw new WakeError(result);
   }
   return {
-    exchangeId: base64urlnopad.encode(exchangeId.toUint8Array()),
-    epoch,
-    serverNonce: base64urlnopad.encode(serverNonce.toUint8Array()),
-    serverPublicKey: base64urlnopad.encode(ephemeral.publicKey.toUint8Array()),
-    expiresAt,
-    webauthn: {
-      rpId: options.rpId,
-      allowCredentials: credentials.filter(c => c.status === "active" && c.userId === session.userId)
-        .map(c => ({ type: "public-key", id: base64urlnopad.encode(c.credentialId) })),
-      userVerification: "required",
-      timeout: options.webauthnTimeoutMs,
-    },
+    ...rekeyOffer(start.record),
+    expiresAt: start.record.expiresAt,
+    webauthn,
   };
 }

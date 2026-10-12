@@ -1,38 +1,21 @@
 // Spec §9.3–§9.4: session-bound rekey verification, atomic epoch advance and idempotent replay.
-import { base64urlnopad } from "@scure/base";
 import { constantTimeEqual } from "@wake-protocol/crypto";
 import {
-  aesKey,
   asClientFinishedMac,
   asExchangeId,
   decodeBase64urlField,
-  deriveKeys,
-  ecdh,
   krChallenge,
-  parseEcPublicKey,
   rekeyTranscriptHash,
-  serverFinished,
-  verifyClientFinished,
   WakeError,
 } from "@wake-protocol/core";
 import type { ClientFinishedMac, EcPublicKey, RekeyTranscriptHash } from "@wake-protocol/core";
 import { isObject } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
 import type { ExchangeRecord, SessionRecord } from "../store/types.ts";
+import { finishRekey, parseClientPublicKey } from "./finish.ts";
 import { applySignCountUpdate, prepareSignCountUpdate } from "../webauthn/counter.ts";
 import { checkAuthenticatedSession } from "../webauthn/finalize.ts";
 import { verifyAssertion } from "../webauthn/verify.ts";
-
-async function publicKey(value: unknown): Promise<EcPublicKey> {
-  try {
-    return await parseEcPublicKey(decodeBase64urlField(value, "invalid_request"));
-  } catch (e) {
-    if (e instanceof WakeError && e.code === "invalid_public_key") {
-      throw new WakeError("invalid_request");
-    }
-    throw e;
-  }
-}
 
 async function transcript(
   ex: ExchangeRecord,
@@ -101,7 +84,7 @@ export async function completeRekey(
       throw new WakeError("conflict");
     }
   }
-  const clientPublicKey = await publicKey(body.clientPublicKey);
+  const clientPublicKey = await parseClientPublicKey(body.clientPublicKey);
   const th = await transcript(ex, clientPublicKey, session.currentKeys);
   if (ex.state === "COMPLETED") {
     const cached = await replay(ex, th, mac, options);
@@ -116,33 +99,9 @@ export async function completeRekey(
     userId: session.userId,
     errorCode: "webauthn_failed",
   }, options);
-  const keys = await deriveKeys(await ecdh(ex.serverPrivateKey!, clientPublicKey), th);
-  if (!await verifyClientFinished(keys.fkC, th, mac)) {
-    throw new WakeError("webauthn_failed");
-  }
-  const currentKeys = {
-    c2s: await aesKey(keys.kC2s),
-    s2c: await aesKey(keys.kS2c),
-    th,
-    c2sCount: 0,
-    s2cCount: 0,
-  };
-  const serverTime = options.now();
-  const absoluteExpiresAt = Math.min(session.hardCapAt, serverTime + options.authLifetimeMs);
-  const finished = await serverFinished(keys.fkS, {
-    th,
-    clientFinished: mac,
-    serverTime,
-    absoluteExpiresAt,
-    idleTimeoutSec: session.idleTimeoutSec,
-  });
-  const response = JSON.stringify({
-    epoch: ex.targetEpoch,
-    serverTime,
-    absoluteExpiresAt,
-    idleTimeoutSec: session.idleTimeoutSec,
-    serverFinished: base64urlnopad.encode(finished.toUint8Array()),
-  });
+  const finish = await finishRekey(ex.serverPrivateKey!, ex.targetEpoch!, th, clientPublicKey, mac, session, options);
+  const { currentKeys, serverTime, absoluteExpiresAt } = finish;
+  const response = JSON.stringify(finish.response);
   const prepared = await prepareSignCountUpdate(verified, options);
   if (!prepared.accepted) {
     const latest = await options.store.getExchange(exchangeId.toUint8Array(), options.now());
