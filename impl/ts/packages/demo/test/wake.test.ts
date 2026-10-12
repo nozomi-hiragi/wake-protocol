@@ -197,6 +197,41 @@ test("ET: GET /api/me, POST /api/operations and GET /api/operation through wakeF
   assert.equal(done.decisionRecord.decidedByUserId, "u1");
 });
 
+test("ET: POST /api/operations refuses a 21st pending operation per user and counts only live ones", async () => {
+  const f = await setup();
+  const { client } = f.alice;
+  const post = (content: string) => client.wakeFetch("/api/operations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  for (let i = 0; i < 19; i++) {
+    assert.equal((await post(`op ${i}`)).status, 200, `op ${i}`);
+  }
+  // 19 pending: the 20th is still accepted.
+  const twentieth = await post("op 19");
+  assert.equal(twentieth.status, 200);
+  const twentiethId = ((await twentieth.json()) as { operationId: string; }).operationId;
+  // 20 pending: refused, and nothing was created.
+  const refused = await post("op 20");
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: { code: "too_many_pending" } });
+  // Another user is not affected.
+  const bob = await f.user("u2", "bob");
+  assert.equal((await bob.client.wakeFetch("/api/operations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "bob's" }),
+  })).status, 200);
+  // A decided operation frees a slot.
+  assert.equal(await f.demo.server.cancelOperation(twentiethId), "cancelled");
+  assert.equal((await post("after cancel")).status, 200);
+  assert.equal((await post("full again")).status, 409);
+  // Expired operations do not count either.
+  f.clock.now += 600_000;
+  assert.equal((await post("after expiry")).status, 200);
+});
+
 test("ET: invalid input, unknown routes and other users' operations", async () => {
   const f = await setup();
   const { client } = f.alice;

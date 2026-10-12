@@ -34,6 +34,8 @@ const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ances
 const FILES = new URL("../", import.meta.url);
 const OPERATION_LIFETIME_MS = 600_000;
 const MAX_ET_BODY = 16_384;
+// Demo only: caps the PENDING operations one user can pile up through the demo route.
+const MAX_PENDING_OPERATIONS = 20;
 const OPERATION_ID = /^[0-9a-f]{64}$/u;
 
 class BadRequest extends Error {}
@@ -218,7 +220,7 @@ function decisionRecord(view: OperationView): Record<string, unknown> | undefine
 }
 
 // Demo ET routes (spec §11.5). They are reachable only inside WAKE-ET; auth comes from the in-process object.
-function demoRoutes(getServer: () => WakeServer, now: () => number): EtRoute[] {
+function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: () => number): EtRoute[] {
   return [
     {
       method: "GET",
@@ -249,6 +251,15 @@ function demoRoutes(getServer: () => WakeServer, now: () => number): EtRoute[] {
         }
         if (typeof content !== "string") {
           return etError(400, "invalid_request");
+        }
+        const pending = await store.listOperations({
+          approverUserId: auth.userId,
+          status: "PENDING",
+          limit: MAX_PENDING_OPERATIONS,
+          now: now(),
+        });
+        if (pending.length >= MAX_PENDING_OPERATIONS) {
+          return etError(409, "too_many_pending");
         }
         try {
           // Demo only: the user requests approval of their own operation. A real app decides content and approver.
@@ -311,7 +322,7 @@ export function createDemoApp(options: DemoAppOptions): DemoApp {
     credentials,
     store,
     now,
-    routes: demoRoutes(() => server, now),
+    routes: demoRoutes(() => server, store, now),
   });
   const pending = new Map<string, PendingRegistration>();
   const app = new Hono();
