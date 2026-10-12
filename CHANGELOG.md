@@ -22,6 +22,14 @@
 - core に `ET_REQUEST_MAX_ENCODED`（1,128,491バイト）と `ET_RESPONSE_MAX_ENCODED`（1,122,335バイト）を追加。ET の全上限と外側・入れ子の LP 長を含めて計算し、`DEFAULT_MAX_PLAINTEXT` を従来の1,114,112から両者の最大値である1,128,491バイトへ変更。既定の ET 上限の最悪ケースが暗号化・復号まで通ることをテストで確認
 - ベクターの再利用可能な生成・実行処理を `packages/vectors/src/` に移動し、scripts は生成 CLI の入口に限定。`@wake-protocol/vectors` のエクスポートと生成内容は維持
 - ET 受信デコーダーに不正なバイト列を直接渡すテストを追加し、構造エラーと意味・上限のエラーコードを確認。core のヘッダーテストをメッセージ用のファイルへ整理し、汎用テストの重複を削除
+- 仮実装 M2: `@wake-protocol/server`（KX と SM のサーバー。フレームワーク非依存の `handle(req: Request)`、§6.2 の WebAuthn 検証、§7.5・§7.6 の原子的で冪等な確定、`/wake/up` の §8.3 の処理順と §8.6 の鍵世代の表、`wake/session`・`wake/logout`、失効 API、メモリのストア、テスト用の `SoftAuthenticator`）を追加
+- 仮実装 M2: `@wake-protocol/client`（ブラウザと Node で動く KX と SM のクライアント。抽出不可の鍵、`/auth/complete` の同一本文での再送、`serverFinished` の検証、時刻の補正、`stale_request` での再送、ログアウト）を追加
+- 仮実装 M2: `@wake-protocol/demo`（Hono によるデモアプリ、パスキーの登録画面、client と server の結合テスト、Chromium の仮想認証器を使う Playwright の e2e）を追加
+- codec に厳密な I-JSON のパーサー `parseIJson`、crypto に ECDSA の DER と `r‖s` の変換（`ecdsaDerToRaw` / `ecdsaRawToDer`）と P-256 の署名検証（`importP256SpkiPublicKey` / `p256EcdsaVerify`）、定数時間の比較（`constantTimeEqual`）を追加
+- 依存を追加: demo の実行時に `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）、開発用に `esbuild` 0.28.2（MIT）と `@playwright/test` 1.63.0（Apache-2.0）。いずれもバージョンを完全に固定
+- M2 で見つかった仕様の論点（公開鍵を SPKI で保存、署名カウンターの更新の原子性、期限の境界など）を `impl/ts/SPEC-NOTES.md` に記録
+- 仕様: `/auth/start` の応答に `serverTime` を追加（§7.2）。クライアントは `/auth/complete` の再送の期限を `expiresAt − serverTime` から端末の時刻で求める（§7.7）。端末の時計がずれていると、`/auth/complete` を1回も送らずに失敗していたため
+- core に、受け取った JSON と Base64url の項目を検査する `parseJsonObject` / `decodeBase64urlField` を追加し、server と client で共有
 - 仕様書を v0.5 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v04からの主な変更)）。TA文面のプロファイル簡素化、ETの責任範囲の整理、テストベクターのエラーコード定義など
 
 ## v0.4.0 (2026-10-10)

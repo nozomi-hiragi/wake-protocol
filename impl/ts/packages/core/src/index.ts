@@ -3,6 +3,7 @@
 export { Bytes } from "@wake-protocol/bytes";
 export { WakeError } from "./spec/errors.ts";
 export { LABELS } from "./spec/labels.ts";
+export { decodeBase64urlField, parseJsonObject } from "./spec/json.ts";
 export {
   type ApprovalId,
   type ApprovalNonce,

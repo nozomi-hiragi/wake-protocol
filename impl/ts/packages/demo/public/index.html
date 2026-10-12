@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WAKE demo</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<h1>WAKE demo</h1>
+<p>Passkey registration below is outside WAKE; login and messages use WAKE-KX and WAKE-SM.</p>
+<p>
+  <input data-testid="username" id="username" placeholder="username" autocomplete="username webauthn">
+  <button data-testid="register" id="register">Register passkey</button>
+</p>
+<p>
+  <button data-testid="login-discoverable" id="login-discoverable">Login (passkey)</button>
+  <button data-testid="login-username" id="login-username">Login with username</button>
+</p>
+<p>
+  <button data-testid="session" id="session">Session</button>
+  <button data-testid="logout" id="logout">Logout</button>
+</p>
+<h2>Status</h2>
+<pre data-testid="status" id="status">idle</pre>
+<h2>Session</h2>
+<pre data-testid="session-output" id="session-output"></pre>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
