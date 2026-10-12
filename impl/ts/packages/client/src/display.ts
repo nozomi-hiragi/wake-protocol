@@ -22,7 +22,7 @@ export interface SegmentOptions {
 }
 
 // Cc is excluded here: LF is the hashInput separator and other controls are special below.
-const SPECIAL = /^[\p{Cf}\p{Co}\p{Cs}\p{Cn}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Variation_Selector}\p{Noncharacter_Code_Point}]$/u;
+const SPECIAL = /^[\p{Cf}\p{Co}\p{Cs}\p{Cn}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Variation_Selector}\p{Noncharacter_Code_Point}\p{Default_Ignorable_Code_Point}\u2800]$/u;
 const SPACE_SEPARATOR = /^\p{Zs}$/u;
 const CONTROL = /^\p{Cc}$/u;
 
@@ -31,7 +31,7 @@ const CONTROL = /^\p{Cc}$/u;
  * bidirectional control character can be drawn as its own element. The only real line break in a hashInput is the
  * LF before the Nonce line; it is a "newline-marker" in both modes. Other Cc characters, format characters
  * (including bidi controls, ZWJ, ZWNJ, ZWSP), variation selectors, private use, noncharacters, unassigned code points,
- * combining marks and every space except U+0020 are "special".
+ * combining marks, default-ignorable code points (e.g. U+115F, U+3164, U+FFA0), U+2800 and every space except U+0020 are "special".
  */
 export function segmentHashInput(hashInput: string, options: SegmentOptions = {}): DisplaySegment[] {
   const breakNewlines = options.newlines === "break";

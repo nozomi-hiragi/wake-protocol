@@ -504,8 +504,10 @@ for (const code of ["bad_request", "too_large", "reauth", "epoch_retired", "rate
     const f = await fixture();
     await f.client.login(login);
     f.upAction = () => jsonResponse({ wakeError: code }, 401);
-    await assert.rejects(f.client.session(), hasCode(code));
-    assert.equal(f.client.loggedIn, code !== "reauth");
+    // epoch_retired for the current epoch means the server moved on: nothing to fall back to, so reauth.
+    const retired = code === "epoch_retired";
+    await assert.rejects(f.client.session(), hasCode(retired ? "reauth" : code));
+    assert.equal(f.client.loggedIn, code !== "reauth" && !retired);
   });
 }
 

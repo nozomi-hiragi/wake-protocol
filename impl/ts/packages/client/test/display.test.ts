@@ -20,6 +20,8 @@ for (const [name, ch] of [
   ["ideographic space", "　"], ["NBSP", " "], ["en space", " "], ["line separator", " "], ["paragraph separator", " "],
   ["combining acute", "́"], ["enclosing circle", "⃝"], ["NUL", "\u0000"], ["TAB", "\t"], ["DEL", "\u007f"],
   ["unassigned", "\u{e0080}"],
+  ["hangul choseong filler", "\u115f"], ["hangul jungseong filler", "\u1160"], ["hangul filler", "\u3164"],
+  ["halfwidth hangul filler", "\uffa0"], ["braille blank", "\u2800"],
 ] as const) {
   test(`${name} is special and keeps its own code point`, () => {
     const segments = segmentHashInput(`a${ch}b`);

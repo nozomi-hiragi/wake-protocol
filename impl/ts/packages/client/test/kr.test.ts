@@ -234,13 +234,37 @@ for (const gap of [99, 100, 101]) {
       assert.equal((await f.client.rekey()).epoch, 1);
       assert.equal(f.krCompleteBodies.length, 2);
     } else {
+      // The completion was sent and its outcome is unknown: the epoch is unknown, so the session is dropped.
       await assert.rejects(f.client.rekey(), hasCode("expired"));
-      assert.equal(f.client.loggedIn, true);
+      assert.equal(f.client.loggedIn, false);
       assert.equal(f.krCompleteBodies.length, 1);
       assert.equal(f.localTime, deadline);
+      await assert.rejects(f.client.session(), hasCode("reauth"));
     }
   });
 }
+
+test("KR completion lost until the deadline drops the session instead of leaving a retired epoch", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  f.krStartMutate = v => { v.expiresAt = f.serverTime + 1000; };
+  f.krCompleteResponse = () => {
+    throw new TypeError("lost response");
+  };
+  await assert.rejects(f.client.rekey(), hasCode("expired"));
+  assert.equal(f.client.loggedIn, false);
+  assert.ok(f.krCompleteBodies.length > 1);
+  await assert.rejects(f.client.request("custom", data), hasCode("reauth"));
+});
+
+test("an outer epoch_retired for a request sealed with the current epoch drops the session as reauth", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  f.upAction = () => f.requests.at(-1)!.context === "custom" ? jsonResponse({ wakeError: "epoch_retired" }, 401) : undefined;
+  await assert.rejects(f.client.request("custom", data), hasCode("reauth"));
+  assert.equal(f.client.loggedIn, false);
+  await assert.rejects(f.client.session(), hasCode("reauth"));
+});
 
 test("WebAuthn reaching the authenticated exchange deadline sends no completion", async () => {
   const f = await fixture();

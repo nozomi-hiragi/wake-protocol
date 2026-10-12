@@ -245,7 +245,9 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     if (f.taApproveError) {
       return taFail(f.taApproveError);
     }
-    const approval = approvals.get(body.approvalId as string)!;
+    // An unknown approvalId falls back to the latest approval of the operation, as if the server matched it by operation.
+    const approval = approvals.get(body.approvalId as string) ??
+      [...approvals.values()].filter(x => x.operationId === body.operationId).at(-1)!;
     if (!approval.response) {
       // The server recomputes ta from ITS OWN approval record and the operationId in the request.
       const operationId = parseOperationIdHex(body.operationId as string);
@@ -267,7 +269,9 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
       };
       if (body.kr === null) {
         assert.equal(approval.rekey, undefined);
-        assert.equal(clientData.challenge, encode(await taChallenge(ta)));
+        if (clientData.challenge !== encode(await taChallenge(ta))) {
+          return taFail("webauthn_failed");
+        }
       } else {
         const kr = body.kr as Record<string, unknown>;
         assert.equal(kr.exchangeId, approval.rekey);

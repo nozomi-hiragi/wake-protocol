@@ -139,14 +139,16 @@ test("approve (TA only) signs over the caller's operationId and keeps the epoch"
   assert.equal((await f.client.session()).epoch, 0);
 });
 
-test("approve ignores an operationId named by the challenge response", async () => {
-  const { f, op } = await ready();
-  const other = await f.addOperation("Another request");
-  f.taChallengeMutate = v => { v.operationId = other.operationId; };
-  // The fake server recomputes ta from the URL's operationId; a challenge over any other id would fail its assert.
-  assert.equal((await f.client.approve(op.operationId)).ta.result, "approved");
-  assert.equal(taRequests(f, "wake/ta/approve")[0]!.body.operationId, op.operationId);
-});
+for (const field of ["approvalId", "approvalNonce"] as const) {
+  test(`a tampered ${field} in the challenge response makes the server-recomputed binding reject the signature`, async () => {
+    const { f, op } = await ready();
+    const size = field === "approvalId" ? 16 : 32;
+    f.taChallengeMutate = v => { v[field] = base64urlnopad.encode(new Uint8Array(size).fill(7)); };
+    // The client signs over what it received; the fake server recomputes ta from its own stored values.
+    await assert.rejects(f.client.approve(op.operationId), hasCode("webauthn_failed"));
+    assert.equal(f.operations.get(op.operationId)!.status, "PENDING");
+  });
+}
 
 test("approve rejects malformed challenge responses before asking for a signature", async () => {
   for (const mutate of [
@@ -305,17 +307,52 @@ test("a lost TA+KR approve response is resent and the switch happens once", asyn
 
 test("a lost TA+KR response followed by epoch_retired recovers through wake/session and confirms APPROVED", async () => {
   const { f, op } = await ready();
-  f.taApproveResponse = attempt => {
+  f.taApproveResponse = (attempt, response) => {
     if (attempt === 1) {
       throw new TypeError("lost committed response");
     }
-    return jsonResponse({ wakeError: "epoch_retired" }, 401);
+    return attempt === 2 ? jsonResponse({ wakeError: "epoch_retired" }, 401) : response;
   };
   const info = await f.client.approve(op.operationId, { rekey: true });
   assert.deepEqual(info.ta, { result: "approved", status: "APPROVED" });
   assert.equal(info.kr!.result, "committed");
   assert.equal((await f.client.session()).epoch, 1);
   assert.equal((await f.client.getOperation(op.operationId)).status, "APPROVED");
+  // lost response, retired resend, then the same plaintext sealed with the new epoch
+  assert.equal(f.taApproveBodies.length, 3);
+  assert.equal(f.taApproveBodies[0], f.taApproveBodies[2]);
+  assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [0, 0, 1]);
+});
+
+test("TA+KR recovery returns the server's replayed result and keeps the session even if the operation is CANCELLED", async () => {
+  const { f, op } = await ready();
+  f.operations.get(op.operationId)!.status = "CANCELLED";
+  f.taApproveMutate = v => {
+    if (f.taApproveBodies.length >= 3) {
+      v.ta = { result: "already_decided", status: "CANCELLED" };
+    }
+  };
+  f.taApproveResponse = (attempt, response) => {
+    if (attempt === 1) {
+      throw new TypeError("lost committed response");
+    }
+    return attempt === 2 ? jsonResponse({ wakeError: "epoch_retired" }, 401) : response;
+  };
+  const info = await f.client.approve(op.operationId, { rekey: true });
+  assert.deepEqual(info.ta, { result: "already_decided", status: "CANCELLED" });
+  assert.equal(info.kr!.result, "committed");
+  assert.equal(f.client.loggedIn, true);
+  assert.equal((await f.client.session()).epoch, 1);
+});
+
+test("after TA+KR conflict the kept epoch is dropped as reauth once the server reports it retired", async () => {
+  const { f, op } = await ready();
+  f.taKrResult = "conflict";
+  assert.equal((await f.client.approve(op.operationId, { rekey: true })).kr!.result, "conflict");
+  assert.equal(f.client.loggedIn, true);
+  f.upAction = () => f.requests.at(-1)!.context === "wake/session" ? jsonResponse({ wakeError: "epoch_retired" }, 401) : undefined;
+  await assert.rejects(f.client.session(), hasCode("reauth"));
+  assert.equal(f.client.loggedIn, false);
 });
 
 test("approve stops at the attempt deadline", async () => {

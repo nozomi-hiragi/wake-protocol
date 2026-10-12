@@ -611,20 +611,29 @@ export class WakeClient {
     { recovered: true; info: WakeSessionInfo; arrivedAt: number }
   > {
     let delay = 100;
+    let sent = false;
+    // Once the completion may have reached the server, an unknown outcome leaves the epoch unknown: drop the session.
+    const expired = () => {
+      if (sent && recoverKeys !== undefined && this.#state === state) {
+        this.#state = undefined;
+      }
+      return new WakeError("expired");
+    };
     for (;;) {
       this.#checkRotation(state, generation);
       if (this.#now() >= deadline) {
-        throw new WakeError("expired");
+        throw expired();
       }
       const pending = await this.#sealRequest(state, context, plaintext, previous);
       this.#checkRotation(state, generation);
+      sent = true;
       // Only fetch/body failures are swallowed here. Cryptographic and protocol failures propagate.
       const received = await this.#sendRequest(state, pending, true);
       this.#checkRotation(state, generation);
       if (received && !(received.response.status >= 500 && !isJsonResponse(received.response))) {
         let result: Uint8Array | undefined;
         try {
-          result = await this.#acceptResponse(state, pending, received);
+          result = await this.#acceptResponse(state, pending, received, recoverKeys !== undefined);
         } catch (e) {
           if (e instanceof WakeError && e.code === "epoch_retired" && recoverKeys !== undefined) {
             return this.#recoverRotation(state, generation, recoverKeys);
@@ -645,7 +654,7 @@ export class WakeClient {
       }
       const remaining = deadline - this.#now();
       if (remaining <= 0) {
-        throw new WakeError("expired");
+        throw expired();
       }
       await this.#sleep(Math.min(delay, remaining));
       delay = Math.min(delay * 2, 2000);
@@ -801,7 +810,12 @@ export class WakeClient {
     };
   }
 
-  async #acceptResponse(state: SessionState, pending: PendingRequest, received: ReceivedResponse): Promise<Uint8Array> {
+  /**
+   * `keepOnRetired` is set only for a rotation completion, where an outer epoch_retired may mean the commit happened (§9.6).
+   * Otherwise epoch_retired for a request sealed with the CURRENT epoch means the server moved on and this memory-only
+   * client holds no other generation, so the session is dropped and reauthentication is required.
+   */
+  async #acceptResponse(state: SessionState, pending: PendingRequest, received: ReceivedResponse, keepOnRetired = false): Promise<Uint8Array> {
     if (received.response.status !== 200 || isJsonResponse(received.response)) {
       const json = parseJsonObject(received.bytes, "bad_request");
       const code = json.wakeError;
@@ -810,6 +824,10 @@ export class WakeClient {
       }
       if (code === "reauth" && this.#state === state) {
         this.#state = undefined;
+      }
+      if (code === "epoch_retired" && !keepOnRetired && this.#state === state && pending.keys === state.current) {
+        this.#state = undefined;
+        throw new WakeError("reauth");
       }
       throw new WakeError(code);
     }
@@ -956,17 +974,16 @@ export class WakeClient {
       if (completed.recovered) {
         // The old epoch is retired, so the commit happened: adopt the epoch confirmed by wake/session under it.
         this.#commitRotation(state, generation, prepared!.keys, completed.info, completed.arrivedAt);
-        const op = await this.getOperation(operationIdHex);
-        if (op.status !== "APPROVED") {
+        // Resend the same plaintext under the new epoch: the server replays the consumed attempt's stored result.
+        const replay = await this.#request("wake/ta/approve", plaintext.toUint8Array());
+        const { info, kr } = this.#parseApprove(replay, operationIdHex);
+        if (kr === null || kr.result !== "committed") {
           this.#state = undefined;
           throw new WakeError("bad_request");
         }
         const { epoch, serverTime, absoluteExpiresAt, idleTimeoutSec } = completed.info;
-        return {
-          operationId: operationIdHex,
-          ta: { result: "approved", status: "APPROVED" },
-          kr: { result: "committed", epoch, serverTime, absoluteExpiresAt, idleTimeoutSec },
-        };
+        info.kr = { result: "committed", epoch, serverTime, absoluteExpiresAt, idleTimeoutSec };
+        return info;
       }
       try {
         return await this.#finishApprove(state, generation, operationIdHex, completed.plaintext, completed.arrivedAt, prepared);
@@ -992,6 +1009,31 @@ export class WakeClient {
     arrivedAt: number,
     prepared: PreparedRotation | undefined,
   ): Promise<ApproveInfo> {
+    const { info, kr: krPart } = this.#parseApprove(plaintext, operationIdHex);
+    if (prepared === undefined) {
+      if (krPart !== null) {
+        throw new WakeError("bad_request");
+      }
+      return info;
+    }
+    if (krPart === null) {
+      throw new WakeError("bad_request");
+    }
+    const kr = krPart;
+    const result = parseResult(kr.result, ["committed", "conflict", "expired"] as const);
+    if (result !== "committed") {
+      // The pending generation is discarded; the current epoch stays.
+      info.kr = { result };
+      return info;
+    }
+    const rekeyInfo = await this.#verifyRotation(state, prepared, kr);
+    this.#commitRotation(state, generation, prepared.keys, rekeyInfo, arrivedAt);
+    info.kr = { result, ...rekeyInfo };
+    return info;
+  }
+
+  /** Parses a wake/ta/approve result into its TA part and the raw kr member (null when absent). */
+  #parseApprove(plaintext: Uint8Array, operationIdHex: string): { info: ApproveInfo; kr: Record<string, unknown> | null } {
     const value = parseJsonObject(plaintext, "bad_request");
     if (value.operationId !== operationIdHex) {
       throw new WakeError("bad_request");
@@ -1004,23 +1046,7 @@ export class WakeClient {
       operationId: operationIdHex,
       ta: { result: parseResult(taPart.result, ["approved", "already_decided", "expired"] as const), status: taPart.status },
     };
-    if (prepared === undefined) {
-      if (value.kr !== null) {
-        throw new WakeError("bad_request");
-      }
-      return info;
-    }
-    const kr = object(value.kr);
-    const result = parseResult(kr.result, ["committed", "conflict", "expired"] as const);
-    if (result !== "committed") {
-      // The pending generation is discarded; the current epoch stays.
-      info.kr = { result };
-      return info;
-    }
-    const rekeyInfo = await this.#verifyRotation(state, prepared, kr);
-    this.#commitRotation(state, generation, prepared.keys, rekeyInfo, arrivedAt);
-    info.kr = { result, ...rekeyInfo };
-    return info;
+    return { info, kr: value.kr === null ? null : object(value.kr) };
   }
 
   async #taCall(context: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
