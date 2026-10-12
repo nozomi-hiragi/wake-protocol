@@ -81,6 +81,30 @@ for (const kind of ["network", "body", "502", "retry"] as const) {
   });
 }
 
+test("replayed KR completion keeps the header-derived offset across the retry delay", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  const committedServerTime = f.serverTime;
+  let replayIssuedAt = 0;
+  f.krCompleteResponse = (attempt, response) => {
+    if (attempt === 1) {
+      // Both clocks move while the committed response is lost. The cached plaintext keeps the commit time.
+      f.serverTime += 5_000;
+      f.localTime += 5_000;
+      throw new TypeError("lost committed response");
+    }
+    replayIssuedAt = f.serverTime;
+    return response;
+  };
+  const info = await f.client.rekey();
+  assert.equal(info.serverTime, committedServerTime);
+  assert.equal(replayIssuedAt, committedServerTime + 5_000);
+  await f.client.request("custom", data);
+  // The next sealed issuedAt is localNow + offset, and localNow is still the replay's arrival time.
+  assert.equal(f.requests.at(-1)!.context, "custom");
+  assert.equal(f.requests.at(-1)!.issuedAt, replayIssuedAt);
+});
+
 test("retired completion recovers pending keys without switching before session confirmation", async () => {
   const f = await fixture();
   await f.client.login(login);

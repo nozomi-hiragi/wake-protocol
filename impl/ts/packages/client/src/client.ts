@@ -542,7 +542,7 @@ export class WakeClient {
       } else {
         info = await this.#verifyRotation(state, prepared, completed.plaintext);
       }
-      this.#commitRotation(state, generation, prepared.keys, info, completed.arrivedAt);
+      this.#commitRotation(state, generation, prepared.keys, info);
       return info;
     } finally {
       this.#rekeying = false;
@@ -576,11 +576,14 @@ export class WakeClient {
     }
   }
 
-  /** Pending requests keep their own old keys. Ordinary sends now select only this generation. */
-  #commitRotation(state: SessionState, generation: number, keys: EpochState, info: RekeyInfo, arrivedAt: number): void {
+  /**
+   * Pending requests keep their own old keys. Ordinary sends now select only this generation.
+   * The clock offset stays as #acceptResponse set it from the accepted header (§8.5). A replayed
+   * completion's plaintext serverTime is the original commit time (§9.4) and must not replace it.
+   */
+  #commitRotation(state: SessionState, generation: number, keys: EpochState, info: RekeyInfo): void {
     this.#checkRotation(state, generation);
     state.current = keys;
-    state.offset = info.serverTime - arrivedAt;
     state.absoluteExpiresAt = info.absoluteExpiresAt;
     state.idleTimeoutSec = info.idleTimeoutSec;
   }
@@ -637,8 +640,8 @@ export class WakeClient {
     deadline: number,
     recoverKeys: EpochState | undefined,
   ): Promise<
-    { recovered: false; plaintext: Uint8Array; arrivedAt: number } |
-    { recovered: true; info: WakeSessionInfo; arrivedAt: number }
+    { recovered: false; plaintext: Uint8Array } |
+    { recovered: true; info: WakeSessionInfo }
   > {
     let delay = 100;
     let sent = false;
@@ -686,7 +689,7 @@ export class WakeClient {
               throw new WakeError(error);
             }
             if (error === undefined) {
-              return { recovered: false, plaintext: result, arrivedAt: received.arrivedAt };
+              return { recovered: false, plaintext: result };
             }
           }
         }
@@ -719,7 +722,7 @@ export class WakeClient {
       }
       const info = this.#parseSession(result, state, keys.epoch);
       this.#checkRotation(state, generation);
-      return { recovered: true as const, info, arrivedAt: received!.arrivedAt };
+      return { recovered: true as const, info };
     } catch (e) {
       if (this.#state === state) {
         this.#state = undefined;
@@ -1019,7 +1022,7 @@ export class WakeClient {
       );
       if (completed.recovered) {
         // The old epoch is retired, so the commit happened: adopt the epoch confirmed by wake/session under it.
-        this.#commitRotation(state, generation, prepared!.keys, completed.info, completed.arrivedAt);
+        this.#commitRotation(state, generation, prepared!.keys, completed.info);
         // Resend the same plaintext under the new epoch: the server replays the consumed attempt's stored result.
         const replay = await this.#request("wake/ta/approve", plaintext.toUint8Array());
         const { info, kr } = this.#parseApprove(replay, operationIdHex);
@@ -1032,7 +1035,7 @@ export class WakeClient {
         return info;
       }
       try {
-        return await this.#finishApprove(state, generation, operationIdHex, completed.plaintext, completed.arrivedAt, prepared);
+        return await this.#finishApprove(state, generation, operationIdHex, completed.plaintext, prepared);
       } catch (e) {
         // After a rekey request the server may have committed: an unreadable answer leaves the epoch unknown.
         if (prepared !== undefined && this.#state === state) {
@@ -1052,7 +1055,6 @@ export class WakeClient {
     generation: number,
     operationIdHex: string,
     plaintext: Uint8Array,
-    arrivedAt: number,
     prepared: PreparedRotation | undefined,
   ): Promise<ApproveInfo> {
     const { info, kr: krPart } = this.#parseApprove(plaintext, operationIdHex);
@@ -1073,7 +1075,7 @@ export class WakeClient {
       return info;
     }
     const rekeyInfo = await this.#verifyRotation(state, prepared, kr);
-    this.#commitRotation(state, generation, prepared.keys, rekeyInfo, arrivedAt);
+    this.#commitRotation(state, generation, prepared.keys, rekeyInfo);
     info.kr = { result, ...rekeyInfo };
     return info;
   }

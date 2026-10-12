@@ -327,6 +327,29 @@ test("a lost TA+KR approve response is resent and the switch happens once", asyn
   assert.equal((await f.client.session()).epoch, 1);
 });
 
+test("replayed TA+KR completion keeps the header-derived offset across the retry delay", async () => {
+  const { f, op } = await ready();
+  const committedServerTime = f.serverTime;
+  let replayIssuedAt = 0;
+  f.taApproveResponse = (attempt, response) => {
+    if (attempt === 1) {
+      // Both clocks move while the committed response is lost. The cached plaintext keeps the commit time.
+      f.serverTime += 5_000;
+      f.localTime += 5_000;
+      throw new TypeError("lost committed response");
+    }
+    replayIssuedAt = f.serverTime;
+    return response;
+  };
+  const info = await f.client.approve(op.operationId, { rekey: true });
+  assert.equal(info.kr?.result, "committed");
+  assert.equal(info.kr && "serverTime" in info.kr ? info.kr.serverTime : undefined, committedServerTime);
+  assert.equal(replayIssuedAt, committedServerTime + 5_000);
+  await f.client.request("custom", new Uint8Array([1]));
+  assert.equal(f.requests.at(-1)!.context, "custom");
+  assert.equal(f.requests.at(-1)!.issuedAt, replayIssuedAt);
+});
+
 test("a lost TA+KR response followed by epoch_retired recovers through wake/session and confirms APPROVED", async () => {
   const { f, op } = await ready();
   f.taApproveResponse = (attempt, response) => {
