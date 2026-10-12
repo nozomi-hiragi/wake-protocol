@@ -1,4 +1,4 @@
-// Spec §6.2–§6.4: assertion validation for the KX ceremony.
+// Spec §6.2–§6.4: assertion validation with explicit ceremony origin and user binding.
 import { Bytes, decodeBase64urlField, parseJsonObject, WakeError } from "@wake-protocol/core";
 import type { WebAuthnChallenge } from "@wake-protocol/core";
 import { utf8ToBytes } from "@wake-protocol/codec";
@@ -10,7 +10,7 @@ import {
 } from "@wake-protocol/crypto";
 import { isObject } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
-import type { ExchangeUser, WakeCredential } from "../store/types.ts";
+import type { WakeCredential } from "../store/types.ts";
 
 function fail(): never {
   throw new WakeError("auth_failed");
@@ -20,24 +20,38 @@ function equal(a: Uint8Array, b: Uint8Array): boolean {
   return new Bytes(a).equals(new Bytes(b));
 }
 
+export interface AssertionCeremony {
+  origins: readonly string[];
+  requiredOrigin?: string;
+  /** A null user means an unknown username; undefined allows discoverable login. */
+  userId?: string | null;
+  approverUserId?: string;
+  errorCode: "auth_failed" | "webauthn_failed";
+}
+
 export interface VerifiedAssertion {
   credential: WakeCredential;
   signCount: number;
   origin: string;
   counterAnomaly: boolean;
+  /** The received bytes, kept for the TA decision record (§10.10). */
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
 }
 
 // §6.2 steps 1–3: client data, challenge and origin.
 function checkClientData(
   clientData: Uint8Array,
   challenge: WebAuthnChallenge,
-  options: ServerOptions,
+  ceremony: AssertionCeremony,
 ): string {
   const cd = parseJsonObject(clientData, "auth_failed");
   if (cd.type !== "webauthn.get" || !equal(decodeBase64urlField(cd.challenge, "auth_failed", 32), challenge.toUint8Array())) {
     fail();
   }
-  if (typeof cd.origin !== "string" || !options.loginOrigins.includes(cd.origin)) {
+  if (typeof cd.origin !== "string" || !ceremony.origins.includes(cd.origin) ||
+      (ceremony.requiredOrigin !== undefined && cd.origin !== ceremony.requiredOrigin)) {
     fail();
   }
   if ((cd.crossOrigin !== undefined && cd.crossOrigin !== false) || "topOrigin" in cd) {
@@ -100,13 +114,16 @@ async function checkSignature(
 function checkUser(
   userHandle: unknown,
   credential: WakeCredential,
-  user: ExchangeUser,
+  ceremony: AssertionCeremony,
 ): void {
   if (userHandle !== undefined && userHandle !== null && !equal(decodeBase64urlField(userHandle, "auth_failed"), credential.userHandle)) {
     fail();
   }
   // Username mode with an unknown user (null) can never succeed.
-  if (user.mode === "username" && (user.requestedUserId === null || credential.userId !== user.requestedUserId)) {
+  if (
+    (ceremony.userId !== undefined && credential.userId !== ceremony.userId) ||
+    (ceremony.approverUserId !== undefined && ceremony.userId !== ceremony.approverUserId)
+  ) {
     fail();
   }
 }
@@ -120,10 +137,10 @@ function checkCounter(credential: WakeCredential, signCount: number): boolean {
   return anomaly;
 }
 
-export async function verifyAssertion(
+async function verify(
   assertion: Record<string, unknown>,
   challenge: WebAuthnChallenge,
-  user: ExchangeUser,
+  ceremony: AssertionCeremony,
   options: ServerOptions,
 ): Promise<VerifiedAssertion> {
   if (assertion.type !== "public-key" || !isObject(assertion.response)) {
@@ -138,12 +155,28 @@ export async function verifyAssertion(
   const clientData = decodeBase64urlField(response.clientDataJSON, "auth_failed");
   const authData = decodeBase64urlField(response.authenticatorData, "auth_failed");
   const signature = decodeBase64urlField(response.signature, "auth_failed");
-  const origin = checkClientData(clientData, challenge, options);
+  const origin = checkClientData(clientData, challenge, ceremony);
   await checkAuthenticatorData(authData, options.rpId);
   const credential = await findCredential(rawId, options);
   await checkSignature(credential, signature, authData, clientData);
-  checkUser(response.userHandle, credential, user);
+  checkUser(response.userHandle, credential, ceremony);
   const signCount = new DataView(authData.buffer, authData.byteOffset + 33, 4).getUint32(0, false);
   const counterAnomaly = checkCounter(credential, signCount);
-  return { credential, signCount, origin, counterAnomaly };
+  return { credential, signCount, origin, counterAnomaly, authenticatorData: authData, clientDataJSON: clientData, signature };
+}
+
+export async function verifyAssertion(
+  assertion: Record<string, unknown>,
+  challenge: WebAuthnChallenge,
+  ceremony: AssertionCeremony,
+  options: ServerOptions,
+): Promise<VerifiedAssertion> {
+  try {
+    return await verify(assertion, challenge, ceremony, options);
+  } catch (e) {
+    if (e instanceof WakeError && e.code === "auth_failed") {
+      throw new WakeError(ceremony.errorCode);
+    }
+    throw e;
+  }
 }

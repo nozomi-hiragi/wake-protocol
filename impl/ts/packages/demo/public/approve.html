@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WAKE demo: approve</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<h1>Approve an operation</h1>
+<p>Log in again on this page: the demo client keeps its session in memory only.</p>
+<p>
+  <button data-testid="login-discoverable" id="login-discoverable">Login (passkey)</button>
+</p>
+<h2>Operation</h2>
+<p>Operation ID: <code data-testid="operation-id" id="operation-id"></code></p>
+<p>Exactly what you approve (each character is shown on its own; special characters appear as code points):</p>
+<div data-testid="hash-input" id="hash-input" class="hash" dir="ltr"></div>
+<p>
+  <label><input type="checkbox" data-testid="newline-toggle" id="newline-toggle"> Show backslash-n as a line break (display only)</label>
+</p>
+<p>
+  <button data-testid="approve" id="approve" disabled>Approve</button>
+  <button data-testid="approve-rekey" id="approve-rekey" disabled>Approve + rekey</button>
+  <button data-testid="reject" id="reject" disabled>Reject</button>
+</p>
+<h2>Status</h2>
+<pre data-testid="status" id="status">idle</pre>
+<script type="module" src="/approve.js"></script>
+</body>
+</html>

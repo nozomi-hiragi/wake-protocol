@@ -27,7 +27,8 @@ const numeric: (keyof WakeServerOptions)[] = [
   "fakeCredentialCount",
   "fakeCredentialIdLength",
   "maxEncryptionsPerKey",
-  "retryAfterSec"
+  "retryAfterSec",
+  "maxPendingRekeys"
 ];
 
 for (const key of numeric) {
@@ -71,6 +72,7 @@ const invalid: [string, Record<string, unknown>][] = [
   ["fake length below 16", { fakeCredentialIdLength: 15 }],
   ["fake length above 64", { fakeCredentialIdLength: 65 }],
   ["fake count above 16", { fakeCredentialCount: 17 }],
+  ["pending rekey count above 16", { maxPendingRekeys: 17 }],
   ["retry-after above a day", { retryAfterSec: 86_401 }],
   ["zero encryption count", { maxEncryptionsPerKey: 0 }],
   ["encryption limit past recommended cap", { maxEncryptionsPerKey: 2 ** 28 + 1 }],
@@ -95,6 +97,22 @@ for (const compareAndSetSignCount of [undefined, 1]) {
       () => createWakeServer({ ...base, credentials }),
       (error: unknown) => error instanceof WakeError && error.code === "invalid_option"
     );
+  });
+}
+
+for (const findUserCredentials of [undefined, 1]) {
+  test(`options rejects missing or nonfunction user credential lookup ${String(findUserCredentials)}`, () => {
+    const credentials = Object.assign(Object.create(base.credentials), { findUserCredentials });
+    assert.throws(
+      () => createWakeServer({ ...base, credentials }),
+      (error: unknown) => error instanceof WakeError && error.code === "invalid_option"
+    );
+  });
+}
+
+for (const maxPendingRekeys of [1, 16]) {
+  test(`options accepts pending rekey limit ${maxPendingRekeys}`, () => {
+    assert.doesNotThrow(() => createWakeServer({ ...base, maxPendingRekeys }));
   });
 }
 

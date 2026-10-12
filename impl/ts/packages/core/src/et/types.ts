@@ -10,6 +10,8 @@ export type EtMethod = (typeof ET_METHODS)[number];
 export const ET_PATH_MAX = 2048;
 export const ET_QUERY_MAX = 4096;
 export const ET_HEADERS_MAX = 8192;
+// Covers the longest fixed ET error body produced by the server.
+export const ET_BODY_MIN = 1024;
 export const ET_BODY_MAX = 1024 * 1024;
 
 const LP_PREFIX_LEN = 4;

@@ -21,13 +21,14 @@ import type {
   EcPublicKey,
   ExchangeId,
   LoginTranscriptHash,
-  SessionId,
 } from "@wake-protocol/core";
 import { checkContentType, isObject, jsonTextResponse, readBody } from "../http.ts";
 import type { ServerOptions } from "../options.ts";
-import type { EpochKeys, ExchangeRecord, SessionRecord, SignCountUpdate } from "../store/types.ts";
+import type { EpochKeys, ExchangeRecord, SessionRecord } from "../store/types.ts";
 import { verifyAssertion } from "../webauthn/verify.ts";
 import type { VerifiedAssertion } from "../webauthn/verify.ts";
+import { applySignCountUpdate, prepareSignCountUpdate } from "../webauthn/counter.ts";
+import { checkAuthenticatedSession } from "../webauthn/finalize.ts";
 
 interface CompleteBody {
   exchangeId: ExchangeId;
@@ -66,43 +67,6 @@ async function parseClientPublicKey(value: unknown): Promise<EcPublicKey> {
   }
 }
 
-/**
- * Applies the counter update stored with the committed exchange. updateSignCount is a max update and may
- * run again after a failure; clearing is atomic, so only one caller notifies about an anomaly.
- */
-async function applySignCountUpdate(update: SignCountUpdate, exchangeId: Uint8Array, options: ServerOptions): Promise<void> {
-  // App credentials are a separate store; this update follows the atomic login commit.
-  await options.credentials.updateSignCount(update.credentialId, update.signCount);
-  if (!await options.store.clearSignCountUpdate(exchangeId) || !update.anomaly) {
-    return;
-  }
-  // Notification failures do not roll back the committed exchange and session.
-  try {
-    await options.onCounterAnomaly?.({
-      credentialId: update.credentialId.slice(),
-      userId: update.userId,
-      storedSignCount: update.storedSignCount,
-      receivedSignCount: update.signCount,
-    });
-  } catch {
-    throw new WakeError("retry");
-  }
-}
-
-async function checkLoginSession(sessionId: SessionId, options: ServerOptions): Promise<void> {
-  const session = await options.store.getSession(sessionId.toUint8Array());
-  if (!session || session.status !== "ACTIVE") {
-    throw new WakeError("auth_failed");
-  }
-  // With app status changes first and revocation second, either login interleaving revokes the session.
-  // Check before counter updates so an update failure cannot skip revocation.
-  const credential = await options.credentials.getCredential(session.loginCredentialId);
-  if (!credential || credential.status !== "active") {
-    await options.store.revokeSessionsByCredential(session.loginCredentialId);
-    throw new WakeError("auth_failed");
-  }
-}
-
 async function replay(
   ex: ExchangeRecord | null,
   th: LoginTranscriptHash,
@@ -120,7 +84,7 @@ async function replay(
   if (!retained || retained.state !== "COMPLETED") {
     return null;
   }
-  await checkLoginSession(retained.sessionId, options);
+  await checkAuthenticatedSession(retained.sessionId, options, "auth_failed");
   if (retained.signCountUpdate) {
     await applySignCountUpdate(retained.signCountUpdate, retained.exchangeId.toUint8Array(), options);
   }
@@ -136,7 +100,11 @@ async function verifyLogin(
   if (ex.state !== "PENDING" || options.now() >= ex.expiresAt || !ex.serverPrivateKey) {
     throw new WakeError("auth_failed");
   }
-  return verifyAssertion(body.assertion, await kxChallenge(th), ex, options);
+  return verifyAssertion(body.assertion, await kxChallenge(th), {
+    origins: options.loginOrigins,
+    ...(ex.mode === "username" ? { userId: ex.requestedUserId } : {}),
+    errorCode: "auth_failed",
+  }, options);
 }
 
 async function deriveLoginResult(
@@ -144,20 +112,23 @@ async function deriveLoginResult(
   clientPublicKey: EcPublicKey,
   th: LoginTranscriptHash,
   clientMac: ClientFinishedMac,
+  credentialId: Uint8Array,
   options: ServerOptions,
 ): Promise<LoginResult> {
   const keys = await deriveKeys(await ecdh(ex.serverPrivateKey!, clientPublicKey), th);
   if (!await verifyClientFinished(keys.fkC, th, clientMac)) {
     throw new WakeError("auth_failed");
   }
+  const now = options.now();
   const currentKeys = {
     c2s: await aesKey(keys.kC2s),
     s2c: await aesKey(keys.kS2c),
     th,
     c2sCount: 0,
     s2cCount: 0,
+    authTime: now,
+    credentialId: credentialId.slice(),
   };
-  const now = options.now();
   const absoluteExpiresAt = now + options.authLifetimeMs;
   const hardCapAt = now + options.hardCapMs;
   if (!Number.isSafeInteger(hardCapAt) || hardCapAt < 0) {
@@ -192,6 +163,7 @@ function buildSession(
     userId: verified.credential.userId,
     loginCredentialId: verified.credential.credentialId.slice(),
     lastAuthCredentialId: verified.credential.credentialId.slice(),
+    authCredentialIds: [verified.credential.credentialId.slice()],
     establishedOrigin: verified.origin,
     status: "ACTIVE",
     currentEpoch: 0,
@@ -212,31 +184,16 @@ async function commitLogin(
   verified: VerifiedAssertion,
   options: ServerOptions,
 ): Promise<Response> {
-  const credential = verified.credential;
-  let update: SignCountUpdate | undefined;
-  if (!credential.backupEligible && verified.signCount > credential.signCount) {
-    if (!await options.credentials.compareAndSetSignCount(credential.credentialId, credential.signCount, verified.signCount)) {
-      const ex = await options.store.getExchange(body.exchangeId.toUint8Array(), options.now());
-      const cached = await replay(ex, th, body.clientMac, options);
-      if (cached) {
-        return cached;
-      }
-      // An identical winner may not have committed yet: resend the same body (§7.7) for replay; clones fail §6.4.
-      if (ex?.state === "PENDING") {
-        throw new WakeError("retry");
-      }
-      throw new WakeError("auth_failed");
+  const prepared = await prepareSignCountUpdate(verified, options);
+  if (!prepared.accepted) {
+    const ex = await options.store.getExchange(body.exchangeId.toUint8Array(), options.now());
+    const cached = await replay(ex, th, body.clientMac, options);
+    if (cached) {
+      return cached;
     }
-    // A later commit failure only leaves the counter advanced, which is safe; no replay update is needed.
-  } else {
-    update = {
-      credentialId: credential.credentialId.slice(),
-      userId: credential.userId,
-      signCount: verified.signCount,
-      storedSignCount: credential.signCount,
-      anomaly: verified.counterAnomaly,
-    };
+    throw new WakeError(ex?.state === "PENDING" ? "retry" : "auth_failed");
   }
+  const update = prepared.update;
   const committed = await options.store.commitLogin({
     exchangeId: body.exchangeId.toUint8Array(),
     now: options.now(),
@@ -254,7 +211,7 @@ async function commitLogin(
     }
     throw new WakeError("auth_failed");
   }
-  await checkLoginSession(session.sessionId, options);
+  await checkAuthenticatedSession(session.sessionId, options, "auth_failed");
   if (update) {
     await applySignCountUpdate(update, body.exchangeId.toUint8Array(), options);
   }
@@ -285,7 +242,7 @@ export async function complete(req: Request, options: ServerOptions): Promise<Re
     throw new WakeError("auth_failed");
   }
   const verified = await verifyLogin(ex, body, th, options);
-  const result = await deriveLoginResult(ex, clientPublicKey, th, body.clientMac, options);
+  const result = await deriveLoginResult(ex, clientPublicKey, th, body.clientMac, verified.credential.credentialId, options);
   const session = buildSession(ex, verified, result, options);
   return commitLogin(body, th, session, result, verified, options);
 }

@@ -7,6 +7,18 @@ import { insertSession } from "../src/testing.ts";
 import { fixture, jsonRequest, login, prepare, wire, sendWire, opened, expectError, response, ORIGIN, decode } from "./helpers.ts";
 import type { Fixture, Login } from "./helpers.ts";
 
+for (const code of ["retry", "reauth", "expired", "conflict"]) {
+  test(`SM maps an activity-store ${code} failure to encrypted internal`, async () => {
+    const f = await fixture();
+    const l = await login(f);
+    f.store.touchSession = async () => { throw new WakeError(code); };
+    assert.deepEqual(
+      (await opened(l, await sendWire(f, await wire(f, l, "wake/session")))).json,
+      { error: { code: "internal" } }
+    );
+  });
+}
+
 async function session(f: Fixture, l: Login): Promise<SessionRecord> {
   const result = await f.store.getSession(l.sessionId.toUint8Array());
   assert.ok(result);
@@ -331,7 +343,8 @@ for (const revoke of ["session", "user", "credential", "lastAuthCredential"] as 
         insertSession(f.store, {
           ...s,
           loginCredentialId: new Uint8Array([2]),
-          lastAuthCredentialId: f.auth.credential.credentialId
+          lastAuthCredentialId: f.auth.credential.credentialId,
+          authCredentialIds: [new Uint8Array([2]), f.auth.credential.credentialId]
         });
       }
       if (revoke === "session") {
@@ -510,7 +523,8 @@ test(
         sessionId: unrelatedId,
         userId: "u2",
         loginCredentialId: new Uint8Array([9]),
-        lastAuthCredentialId: new Uint8Array([9])
+        lastAuthCredentialId: new Uint8Array([9]),
+        authCredentialIds: [new Uint8Array([9])]
       }
     );
     await f.server.revokeSessionsByUser("u1");
