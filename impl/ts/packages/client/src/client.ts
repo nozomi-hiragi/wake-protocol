@@ -36,6 +36,7 @@ import {
   openParsed,
   DIR_C2S,
   DIR_S2C,
+  ET_BODY_MIN,
   ET_BODY_MAX,
   ET_REQUEST_MAX_ENCODED,
   ET_RESPONSE_MAX_ENCODED,
@@ -74,7 +75,7 @@ export interface WakeClientOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Integer in 1..2**28; reservations include failed transmissions. */
   maxEncryptionsPerKey?: number;
-  /** Positive safe integer ET body limit in bytes (§11.2). Defaults to ET_BODY_MAX. */
+  /** Safe integer ET body limit of at least ET_BODY_MIN bytes (§11.2). Defaults to ET_BODY_MAX. */
   etBodyLimit?: number;
   /** Positive safe integer plaintext limit; must cover ET request and response encoding. */
   maxPlaintext?: number;
@@ -319,7 +320,7 @@ export class WakeClient {
     }
     this.#maxEncryptions = limit;
     const bodyLimit = options.etBodyLimit === undefined ? ET_BODY_MAX : options.etBodyLimit;
-    if (!Number.isSafeInteger(bodyLimit) || bodyLimit < 1) {
+    if (!Number.isSafeInteger(bodyLimit) || bodyLimit < ET_BODY_MIN) {
       throw new WakeError("invalid_option");
     }
     this.#etBodyLimit = bodyLimit;

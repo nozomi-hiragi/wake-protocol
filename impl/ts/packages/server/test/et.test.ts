@@ -5,6 +5,7 @@ import { asciiToBytes, bytesToUtf8, encodeU32LengthPrefixed } from "@wake-protoc
 import {
   Bytes,
   DIR_S2C,
+  ET_BODY_MIN,
   ET_BODY_MAX,
   ET_REQUEST_MAX_ENCODED,
   WakeError,
@@ -234,12 +235,12 @@ test("ET malformed requests map to 400 with the matching code", async () => {
 
 test("ET body limit is inclusive: at the limit passes, above it is 413 too_large", async () => {
   const seen: Seen = {};
-  const f = await fixture({ routes: [echoRoute(seen)], etBodyLimit: 10 });
+  const f = await fixture({ routes: [echoRoute(seen)], etBodyLimit: ET_BODY_MIN });
   const l = await login(f);
-  const ok = await callEt(f, l, request("POST", "/echo", "", [], new Uint8Array(10)));
+  const ok = await callEt(f, l, request("POST", "/echo", "", [], new Uint8Array(ET_BODY_MIN)));
   assert.equal(ok.status, 201);
-  assert.equal(ok.body.length, 10);
-  const big = await callEt(f, l, request("POST", "/echo", "", [], new Uint8Array(11)));
+  assert.equal(ok.body.length, ET_BODY_MIN);
+  const big = await callEt(f, l, request("POST", "/echo", "", [], new Uint8Array(ET_BODY_MIN + 1)));
   assert.equal(big.status, 413);
   assert.deepEqual(errorBody(big.body), { error: { code: "too_large" } });
 });
@@ -456,11 +457,11 @@ test("ET route registration accepts the same path under different methods and ne
   assert.doesNotThrow(() => createWakeServer({ ...baseOptions, routes: [] }));
 });
 
-test("etBodyLimit must be a positive safe integer", () => {
-  for (const value of [null, "1", NaN, Infinity, -1, 0, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+test("etBodyLimit must be a safe integer of at least ET_BODY_MIN", () => {
+  for (const value of [null, "1", NaN, Infinity, -1, 0, 0.5, ET_BODY_MIN - 1, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => createWakeServer({ ...baseOptions, etBodyLimit: value } as never), invalidOption, String(value));
   }
-  assert.doesNotThrow(() => createWakeServer({ ...baseOptions, etBodyLimit: 1 }));
+  assert.doesNotThrow(() => createWakeServer({ ...baseOptions, etBodyLimit: ET_BODY_MIN }));
 });
 
 test("with routes, maxPlaintext must cover the worst-case EtRequest for the body limit (both sides)", () => {
@@ -468,9 +469,9 @@ test("with routes, maxPlaintext must cover the worst-case EtRequest for the body
   const required = ET_REQUEST_MAX_ENCODED;
   assert.doesNotThrow(() => createWakeServer({ ...baseOptions, routes, maxPlaintext: required }));
   assert.throws(() => createWakeServer({ ...baseOptions, routes, maxPlaintext: required - 1 }), invalidOption);
-  assert.doesNotThrow(() => createWakeServer({ ...baseOptions, routes, etBodyLimit: 100, maxPlaintext: required - ET_BODY_MAX + 100 }));
+  assert.doesNotThrow(() => createWakeServer({ ...baseOptions, routes, etBodyLimit: ET_BODY_MIN, maxPlaintext: required - ET_BODY_MAX + ET_BODY_MIN }));
   assert.throws(
-    () => createWakeServer({ ...baseOptions, routes, etBodyLimit: 100, maxPlaintext: required - ET_BODY_MAX + 99 }),
+    () => createWakeServer({ ...baseOptions, routes, etBodyLimit: ET_BODY_MIN, maxPlaintext: required - ET_BODY_MAX + ET_BODY_MIN - 1 }),
     invalidOption,
   );
   // Raising the limit above the default needs a larger maxPlaintext.

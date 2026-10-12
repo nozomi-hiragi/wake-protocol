@@ -47,13 +47,12 @@ export function checkRoutes(routes: unknown): EtRoute[] {
   return checked;
 }
 
-// The fixed error bodies are always small, so they are exempt from a custom body limit.
-function etError(status: number, code: string): Bytes {
+function etError(status: number, code: string, bodyLimit: number): Bytes {
   return encodeEtResponse({
     status,
     headers: [["content-type", "application/json"]],
     body: new Bytes(utf8ToBytes(JSON.stringify({ error: { code } }))),
-  });
+  }, { bodyLimit });
 }
 
 function checkHandlerResponse(value: EtRouteResponse, bodyLimit: number): Bytes {
@@ -88,11 +87,11 @@ export async function serveEt(
     if (status === undefined) {
       throw e;
     }
-    return etError(status, (e as WakeError).code).toUint8Array();
+    return etError(status, (e as WakeError).code, bodyLimit).toUint8Array();
   }
   const route = options.routes.find(r => r.method === request.method && r.path === request.path);
   if (!route) {
-    return etError(404, "route_not_found").toUint8Array();
+    return etError(404, "route_not_found", bodyLimit).toUint8Array();
   }
   // The request was sealed with the epoch's keys, so it carries that epoch's authentication, not the newest one.
   const keys = header.epoch === session.currentEpoch ? session.currentKeys :
@@ -119,6 +118,6 @@ export async function serveEt(
     return checkHandlerResponse(result, bodyLimit).toUint8Array();
   } catch {
     // A thrown handler error or an invalid handler response: no message leaves the server.
-    return etError(500, "internal").toUint8Array();
+    return etError(500, "internal", bodyLimit).toUint8Array();
   }
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes } from "@wake-protocol/bytes";
 import { bytesToUtf8, utf8ToBytes } from "@wake-protocol/codec";
-import { encodeEtRequest, encodeEtResponse, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED, DEFAULT_MAX_PLAINTEXT } from "@wake-protocol/core";
+import { encodeEtRequest, encodeEtResponse, ET_BODY_MIN, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED, DEFAULT_MAX_PLAINTEXT } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
 import { fixture, hasCode, jsonResponse } from "./fixture.ts";
 
@@ -98,13 +98,13 @@ test("wakeFetch uses a raised ET body limit for both requests and responses", as
 });
 
 test("wakeFetch rejects response bodies above the configured ET body limit", async () => {
-  const f = await fixture({ etBodyLimit: 1 });
+  const f = await fixture({ etBodyLimit: ET_BODY_MIN });
   await f.client.login(login);
-  f.etHandler = () => etResponse(200, [], new Uint8Array(2));
+  f.etHandler = () => etResponse(200, [], new Uint8Array(ET_BODY_MIN + 1));
   await assert.rejects(f.client.wakeFetch("/a"), hasCode("too_large"));
 });
 
-for (const limit of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, null, "1"]) {
+for (const limit of [0, -1, 1.5, ET_BODY_MIN - 1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, null, "1"]) {
   test(`reject invalid ET body limit ${limit}`, () => {
     assert.throws(() => new WakeClient({
       baseUrl: "",
@@ -114,7 +114,7 @@ for (const limit of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, nul
   });
 }
 
-for (const limit of [1, ET_BODY_MAX]) {
+for (const limit of [ET_BODY_MIN, ET_BODY_MAX]) {
   test(`accept ET body limit boundary ${limit}`, () => {
     assert.doesNotThrow(() => new WakeClient({
       baseUrl: "",
@@ -124,8 +124,8 @@ for (const limit of [1, ET_BODY_MAX]) {
   });
 }
 
-test("wakeFetch surfaces a 404 route_not_found EtResponse as a Response", async () => {
-  const f = await fixture();
+test("wakeFetch surfaces a 404 route_not_found EtResponse at the minimum body limit", async () => {
+  const f = await fixture({ etBodyLimit: ET_BODY_MIN });
   await f.client.login(login);
   f.etHandler = () => etResponse(404, [["Content-Type", "application/json"]], utf8ToBytes('{"error":{"code":"route_not_found"}}'));
   const response = await f.client.wakeFetch("/missing");

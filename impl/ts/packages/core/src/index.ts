@@ -131,6 +131,7 @@ export {
   type EtOptions,
   type EtRequest,
   type EtResponse,
+  ET_BODY_MIN,
   ET_BODY_MAX,
   ET_HEADERS_MAX,
   ET_METHODS,

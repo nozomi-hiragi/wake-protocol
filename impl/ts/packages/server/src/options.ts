@@ -1,5 +1,5 @@
 // Spec §6.3, §13: server configuration and validation.
-import { DEFAULT_MAX_PLAINTEXT, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, WakeError } from "@wake-protocol/core";
+import { DEFAULT_MAX_PLAINTEXT, ET_BODY_MAX, ET_BODY_MIN, ET_REQUEST_MAX_ENCODED, WakeError } from "@wake-protocol/core";
 import { checkRoutes } from "./et/transport.ts";
 import type { EtRoute } from "./et/types.ts";
 import { MemoryWakeStore } from "./store/memory.ts";
@@ -34,7 +34,7 @@ export interface WakeServerOptions {
   idleTimeoutSec?: number;
   completedRetentionMs?: number;
   maxPlaintext?: number;
-  /** ET body limit (§11.2). With routes, maxPlaintext must cover the worst-case EtRequest for this limit. */
+  /** ET body limit (§11.2), at least ET_BODY_MIN bytes. With routes, maxPlaintext must cover the worst-case EtRequest for this limit. */
   etBodyLimit?: number;
   /** In-process WAKE-ET routes (§11.5); none by default. */
   routes?: readonly EtRoute[];
@@ -149,6 +149,7 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     values.maxPendingRekeys > 16 ||
     values.retryAfterSec > 86_400 ||
     values.maxEncryptionsPerKey > 2 ** 28 ||
+    values.etBodyLimit < ET_BODY_MIN ||
     values.maxPlaintext > 0xffffffff ||
     values.maxAuthBody > 0xffffffff
   ) {

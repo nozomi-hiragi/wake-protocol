@@ -84,7 +84,7 @@ KR・TA・ET を実装して（M3）、決める必要があった点です。�
 | ET での §8.3 のエラー | §8.3、§11.6 | `stale_request` と `invalid_context` は、ほかの context と同じ平文の JSON `{"error":{"code"}}` で返す。§11.6 のルーティングのエラーは `EtResponse` で返す。`EtResponse` は u32 の長さで始まり `{` では始まらないので、クライアントは区別できる |
 | ET のハンドラーの失敗 | §11.6 | ハンドラーが例外を投げた場合や、不正な応答（status・ヘッダー・本文の上限）を返した場合は、500 の `EtResponse`（`{"error":{"code":"internal"}}`）を返す。§11.6 の表に該当する行がない。例外のメッセージは外に出さない |
 | ET の認証情報の `epoch` | §11.5 | 要求の鍵世代を渡す（猶予期間中は旧世代のことがある）。`authTime` と `credentialId` も、その鍵世代を確立した認証のもの（KX または KR の時刻と credential）を渡す。旧世代の要求に新しい世代の値を渡さない |
-| ET の本文の上限と `maxPlaintext` | §8.7、§11.2 | ルートを登録した場合だけ、`maxPlaintext` が設定した本文の上限での最悪の `EtRequest` の長さ以上であることを設定の検査で求める |
+| ET の本文の上限と `maxPlaintext` | §8.7、§11.2、§11.6 | ルートを登録した場合だけ、`maxPlaintext` が設定した本文の上限での最悪の `EtRequest` の長さ以上であることを設定の検査で求める。クライアントも同じ考え方で `maxPlaintext` を検査する。本文の上限には下限 `ET_BODY_MIN`（1024バイト）を設け、§11.6 の固定のエラー本文が必ず収まるようにする（server・client の両方で、下回る設定は `invalid_option`） |
 | `/wake/up` と `/wake/transport` の context | §11.1、§12.1 | `/wake/transport` は `wake-et` だけ、`/wake/up` は `wake-et` 以外だけを受け付け、どちらも違えば暗号化した `invalid_context` |
 
 ## 確認できたこと（v0.4 時点）
