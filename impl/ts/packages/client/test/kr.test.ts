@@ -150,11 +150,12 @@ for (const field of ["serverFinished", "epoch", "serverTime", "absoluteExpiresAt
     await assert.rejects(f.client.rekey(), hasCode("auth_failed"));
     assert.equal(f.client.loggedIn, false);
     assert.equal(f.sleeps.length, 0);
+    assert.ok(!f.requests.some(h => h.context === "wake/session" && h.epoch === 1));
   });
 }
 
 for (const [field, value] of [
-  ["epoch", 2 ** 32], ["serverTime", -1], ["serverTime", 1.5], ["serverTime", 2 ** 53],
+  ["epoch", 2 ** 32], ["serverTime", -1], ["serverTime", 1.5],
   ["absoluteExpiresAt", null], ["idleTimeoutSec", 2 ** 32], ["serverFinished", "AQ"], ["serverFinished", "AQ="],
 ] as const) {
   test(`KR malformed completion ${field}=${value} drops the session`, async () => {
@@ -165,6 +166,14 @@ for (const [field, value] of [
     assert.equal(f.client.loggedIn, false);
   });
 }
+
+test("KR non-I-JSON completion number recovers the committed epoch", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  f.krCompleteMutate = v => { v.serverTime = 2 ** 53; };
+  assert.equal((await f.client.rekey()).epoch, 1);
+  assert.equal((await f.client.session()).epoch, 1);
+});
 
 for (const code of ["conflict", "expired", "webauthn_failed", "retry", "epoch_retired"]) {
   for (const future of [false, true]) {
@@ -211,8 +220,13 @@ for (const text of ['{"epoch":1,"epoch":1}', '[]', '{"epoch":9007199254740992}',
       const f = await fixture();
       await f.client.login(login);
       f.upPlaintext = (h, plaintext) => h.context === `wake/kr/${phase}` ? utf8ToBytes(text) : plaintext;
-      await assert.rejects(f.client.rekey(), hasCode(phase === "start" ? "bad_request" : "auth_failed"));
-      assert.equal(f.client.loggedIn, phase === "start");
+      if (phase === "start") {
+        await assert.rejects(f.client.rekey(), hasCode("bad_request"));
+        assert.equal((await f.client.session()).epoch, 0);
+      } else {
+        assert.equal((await f.client.rekey()).epoch, 1);
+        assert.equal((await f.client.session()).epoch, 1);
+      }
     });
   }
 }
@@ -234,27 +248,27 @@ for (const gap of [99, 100, 101]) {
       assert.equal((await f.client.rekey()).epoch, 1);
       assert.equal(f.krCompleteBodies.length, 2);
     } else {
-      // The completion was sent and its outcome is unknown: the epoch is unknown, so the session is dropped.
-      await assert.rejects(f.client.rekey(), hasCode("expired"));
-      assert.equal(f.client.loggedIn, false);
+      // The sent completion committed; pending-key recovery succeeds even after its retry deadline.
+      assert.equal((await f.client.rekey()).epoch, 1);
+      assert.equal(f.client.loggedIn, true);
       assert.equal(f.krCompleteBodies.length, 1);
       assert.equal(f.localTime, deadline);
-      await assert.rejects(f.client.session(), hasCode("reauth"));
+      assert.equal((await f.client.session()).epoch, 1);
     }
   });
 }
 
-test("KR completion lost until the deadline drops the session instead of leaving a retired epoch", async () => {
+test("KR completion lost until the deadline recovers the committed epoch", async () => {
   const f = await fixture();
   await f.client.login(login);
   f.krStartMutate = v => { v.expiresAt = f.serverTime + 1000; };
   f.krCompleteResponse = () => {
     throw new TypeError("lost response");
   };
-  await assert.rejects(f.client.rekey(), hasCode("expired"));
-  assert.equal(f.client.loggedIn, false);
+  assert.equal((await f.client.rekey()).epoch, 1);
+  assert.equal(f.client.loggedIn, true);
   assert.ok(f.krCompleteBodies.length > 1);
-  await assert.rejects(f.client.request("custom", data), hasCode("reauth"));
+  assert.equal((await f.client.session()).epoch, 1);
 });
 
 test("an outer epoch_retired for a request sealed with the current epoch drops the session as reauth", async () => {
@@ -401,12 +415,10 @@ test("old-epoch retries still consume the old key's encryption budget", async ()
   assert.equal(f.client.loggedIn, false);
 });
 
-test("non-retry outer errors and malformed JSON do not trigger transport retries", async () => {
+test("recognized non-retry outer errors preserve their handling without transport retries", async () => {
   for (const response of [
     jsonResponse({ wakeError: "bad_request" }, 400),
     jsonResponse({ wakeError: "rate_limited" }, 429),
-    new Response('{"wakeError":"retry","wakeError":"retry"}', { status: 503,
-      headers: { "Content-Type": "application/json" } }),
   ]) {
     const f = await fixture();
     await f.client.login(login);
@@ -448,6 +460,7 @@ for (const method of ["encrypt", "decrypt", "verify"] as const) {
         await assert.rejects(f.client.rekey(), error => error === failure);
         assert.equal(f.sleeps.length, 0);
         assert.equal(f.krCompleteBodies.length, method === "encrypt" ? 0 : 1);
+        assert.equal(f.client.loggedIn, method === "encrypt");
       } finally {
         if (original) {
           Object.defineProperty(crypto.subtle, method, original);

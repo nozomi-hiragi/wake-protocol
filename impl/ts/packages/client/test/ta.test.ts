@@ -220,13 +220,13 @@ test("TA+KR with a bad serverFinished drops the session", async () => {
   };
   await assert.rejects(f.client.approve(op.operationId, { rekey: true }), hasCode("auth_failed"));
   assert.equal(f.client.loggedIn, false);
+  assert.ok(!f.requests.some(h => h.context === "wake/session" && h.epoch === 1));
   await assert.rejects(f.client.session(), hasCode("reauth"));
 });
 
-test("TA+KR with a wrong epoch or malformed numbers drops the session", async () => {
+test("TA+KR with a wrong epoch or malformed Finished fields drops the session", async () => {
   for (const mutate of [
     (v: Record<string, unknown>) => { v.epoch = 2; },
-    (v: Record<string, unknown>) => { v.serverTime = 2 ** 53; },
     (v: Record<string, unknown>) => { v.serverTime = -1; },
     (v: Record<string, unknown>) => { delete v.serverFinished; },
   ]) {
@@ -235,6 +235,15 @@ test("TA+KR with a wrong epoch or malformed numbers drops the session", async ()
     await assert.rejects(f.client.approve(op.operationId, { rekey: true }), (e: unknown) => e instanceof WakeError);
     assert.equal(f.client.loggedIn, false);
   }
+});
+
+test("TA+KR non-I-JSON completion recovers the epoch even if its stored result is still unreadable", async () => {
+  const { f, op } = await ready();
+  f.taApproveKrMutate = v => { v.serverTime = 2 ** 53; };
+  await assert.rejects(f.client.approve(op.operationId, { rekey: true }), hasCode("bad_request"));
+  assert.equal(f.client.loggedIn, true);
+  assert.equal((await f.client.session()).epoch, 1);
+  assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [0, 1]);
 });
 
 for (const result of ["conflict", "expired"] as const) {

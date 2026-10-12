@@ -150,6 +150,11 @@ interface ReceivedResponse {
 }
 
 const OUTER_CODES = new Set(["bad_request", "too_large", "reauth", "epoch_retired", "rate_limited", "retry"]);
+// Authenticated rejections leave the pending generation uncommitted. Keep legacy encrypted retry/epoch_retired errors.
+const ROTATION_REJECTION_CODES = new Set([
+  "invalid_request", "invalid_context", "not_found", "expired", "already_decided", "webauthn_failed", "conflict",
+  "rate_limited", "retry", "epoch_retired",
+]);
 const EMPTY_JSON = utf8ToBytes("{}");
 
 function encodeBinary(bytes: Bytes): string {
@@ -619,7 +624,7 @@ export class WakeClient {
 
   /**
    * Sends one idempotent plaintext sealed with the previous generation, resending it with a fresh requestId until
-   * the deadline. With `recoverKeys`, epoch_retired means the commit happened and the response was lost (§9.6).
+   * the deadline. With `recoverKeys`, an unknown outcome is probed with the pending generation (§9.6).
    */
   async #completeRotation(
     state: SessionState,
@@ -635,52 +640,67 @@ export class WakeClient {
   > {
     let delay = 100;
     let sent = false;
-    // Once the completion may have reached the server, an unknown outcome leaves the epoch unknown: drop the session.
-    const expired = () => {
-      if (sent && recoverKeys !== undefined && this.#state === state) {
-        this.#state = undefined;
-      }
-      return new WakeError("expired");
-    };
-    for (;;) {
-      this.#checkRotation(state, generation);
-      if (this.#now() >= deadline) {
-        throw expired();
-      }
-      const pending = await this.#sealRequest(state, context, plaintext, previous);
-      this.#checkRotation(state, generation);
-      sent = true;
-      // Only fetch/body failures are swallowed here. Cryptographic and protocol failures propagate.
-      const received = await this.#sendRequest(state, pending, true);
-      this.#checkRotation(state, generation);
-      if (received && !(received.response.status >= 500 && !isJsonResponse(received.response))) {
-        let result: Uint8Array | undefined;
-        try {
-          result = await this.#acceptResponse(state, pending, received, recoverKeys !== undefined);
-        } catch (e) {
-          if (e instanceof WakeError && e.code === "epoch_retired" && recoverKeys !== undefined) {
-            return this.#recoverRotation(state, generation, recoverKeys);
+    let knownFailure = false;
+    try {
+      for (;;) {
+        this.#checkRotation(state, generation);
+        if (this.#now() >= deadline) {
+          throw new WakeError("expired");
+        }
+        const pending = await this.#sealRequest(state, context, plaintext, previous);
+        this.#checkRotation(state, generation);
+        sent = true;
+        const received = await this.#sendRequest(state, pending, true);
+        this.#checkRotation(state, generation);
+        if (received && !(received.response.status >= 500 && !isJsonResponse(received.response))) {
+          // Classify only a well-formed outer error as a hint; local parsing/decryption failures have unknown outcomes.
+          let outerCode: string | undefined;
+          if (received.response.status !== 200 || isJsonResponse(received.response)) {
+            const json = parseJsonObject(received.bytes, "bad_request");
+            if (typeof json.wakeError === "string" && OUTER_CODES.has(json.wakeError)) {
+              outerCode = json.wakeError;
+            }
           }
-          if (!(e instanceof WakeError) || e.code !== "retry") {
-            throw e;
+          let result: Uint8Array | undefined;
+          try {
+            result = await this.#acceptResponse(state, pending, received, recoverKeys !== undefined);
+          } catch (e) {
+            if (outerCode === "epoch_retired" && recoverKeys !== undefined) {
+              return await this.#recoverRotation(state, generation, recoverKeys);
+            }
+            if (outerCode !== "retry") {
+              knownFailure = outerCode !== undefined;
+              throw e;
+            }
+          }
+          if (result !== undefined) {
+            const json = parseJsonObject(result, "bad_request");
+            const error = parseEncryptedError(result, true);
+            if ("error" in json && error === undefined) {
+              throw new WakeError("bad_request");
+            }
+            if (error !== undefined && error !== "stale_request") {
+              knownFailure = ROTATION_REJECTION_CODES.has(error);
+              throw new WakeError(error);
+            }
+            if (error === undefined) {
+              return { recovered: false, plaintext: result, arrivedAt: received.arrivedAt };
+            }
           }
         }
-        if (result !== undefined) {
-          const error = parseEncryptedError(result, true);
-          if (error !== undefined && error !== "stale_request") {
-            throw new WakeError(error);
-          }
-          if (error === undefined) {
-            return { recovered: false, plaintext: result, arrivedAt: received.arrivedAt };
-          }
+        const remaining = deadline - this.#now();
+        if (remaining <= 0) {
+          throw new WakeError("expired");
         }
+        await this.#sleep(Math.min(delay, remaining));
+        delay = Math.min(delay * 2, 2000);
       }
-      const remaining = deadline - this.#now();
-      if (remaining <= 0) {
-        throw expired();
+    } catch (e) {
+      // Every unknown failure after sending may follow a committed rotation, including failures between retries.
+      if (!knownFailure && sent && recoverKeys !== undefined && this.#state === state && generation === this.#generation) {
+        return await this.#recoverRotation(state, generation, recoverKeys);
       }
-      await this.#sleep(Math.min(delay, remaining));
-      delay = Math.min(delay * 2, 2000);
+      throw e;
     }
   }
 
