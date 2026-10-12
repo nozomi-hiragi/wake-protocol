@@ -29,6 +29,11 @@
 - 仮実装 M3: WAKE-TA と TA+KR（§10）を追加。server に Operation の作成・取消・取得と認否記録（付録C の形式での書き出しを含む）、`wake/ta/list`・`get`・`challenge`・`approve`・`reject`。client に §10.11 の検査つきの取得と承認、承認画面の表示用の `segmentHashInput`。core に認否記録の検証 `verifyApprovalBundle`
 - 仮実装 M3: WAKE-ET（§11）を追加。server に `/wake/transport` と完全一致のルート登録、client に `wakeFetch`
 - 仮実装 M3: demo に KR・TA・ET の画面、承認画面、結合テストと e2e を追加
+- `@wake-protocol/server` のストアの破壊的変更（M2 からの移行）: 自作のストアは次を実装する必要がある。`createWakeServer` は足りないメソッドがあると `invalid_option` を投げる
+  - `CredentialStore`: 旧 `getCredential` / `findUserByUsername` / `compareAndSetSignCount` / `updateSignCount`。新 `findUserCredentials(userId): Promise<WakeCredential[]>` を追加（KR・TA の `allowCredentials` 用。ユーザーのすべての credential を返し、サーバーが active のものに絞る）
+  - `WakeStore`: 新 `createRekey` / `commitRekey` / `supersedeExchange`（KR）、`createOperation` / `getOperation` / `listOperations` / `cancelOperation` / `rejectOperation` / `createApproval` / `getApproval` / `commitApproval`（TA）を追加。`commitRekey` と `commitApproval` は M2 の `commitLogin` と同じく、条件の確認と書き込みを1つの原子的操作で行う。`clearSignCountUpdate(id)` は交換 ID に加えて承認試行の ID も受け取る
+  - `EpochKeys`: 旧 `{ c2s, s2c, th, c2sCount, s2cCount }`。新 `authTime`（その鍵世代を確立した認証の時刻）と `credentialId`（その認証の credential）が必須。保存済みのセッションを移行する場合は、現世代に `authTime = SessionRecord.authTime`、`credentialId = lastAuthCredentialId` を入れる
+  - `ExchangeRecord` に KR 用の任意の項目（`targetEpoch`、`prevTh`、`createdAt`、`boundApprovalId`、`reauthenticatedCredentialId`）が加わる。保存・読み出しで項目を落とさないこと。M2 からある `SessionRecord` の `prevKeys` / `prevValidUntil` は、KR で実際に使われるようになる
 - M3 で見つかった仕様の論点（TA+KR の `prevTh`、`already_decided` と `expired` の返し方、ET での §8.3 のエラーなど）を `impl/ts/SPEC-NOTES.md` に記録
 - codec に厳密な I-JSON のパーサー `parseIJson`、crypto に ECDSA の DER と `r‖s` の変換（`ecdsaDerToRaw` / `ecdsaRawToDer`）と P-256 の署名検証（`importP256SpkiPublicKey` / `p256EcdsaVerify`）、定数時間の比較（`constantTimeEqual`）を追加
 - 依存を追加: demo の実行時に `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）、開発用に `esbuild` 0.28.2（MIT）と `@playwright/test` 1.63.0（Apache-2.0）。いずれもバージョンを完全に固定
