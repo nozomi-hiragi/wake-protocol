@@ -409,6 +409,84 @@ test("approve stops at the attempt deadline", async () => {
   await assert.rejects(f.client.approve(op.operationId), hasCode("expired"));
 });
 
+/** Blocks the first assertion after `ready()` resets the counter. A nested rekey's assertion proceeds. */
+function holdFirstAssertion(f: Awaited<ReturnType<typeof fixture>>) {
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  let reached!: () => void;
+  const arrived = new Promise<void>(resolve => { reached = resolve; });
+  f.onAssertion = async () => {
+    if (f.assertionCalls !== 1) {
+      return;
+    }
+    reached();
+    await blocked;
+  };
+  return { release, arrived };
+}
+
+// Default G_epoch is 60s (§9.5). The approve attempt lives 300s, so it is still inside the deadline.
+const PAST_G_EPOCH_MS = 60_001;
+
+function advancePastEpochGrace(f: Awaited<ReturnType<typeof fixture>>) {
+  f.localTime += PAST_G_EPOCH_MS;
+  f.serverTime += PAST_G_EPOCH_MS;
+}
+
+test("a TA-only approve seals with the epoch current after a rekey during WebAuthn", async () => {
+  const { f, op } = await ready();
+  const held = holdFirstAssertion(f);
+  const pending = f.client.approve(op.operationId);
+  await held.arrived;
+  assert.equal((await f.client.rekey()).epoch, 1);
+  advancePastEpochGrace(f);
+  held.release();
+  const info = await pending;
+  assert.deepEqual(info, { operationId: op.operationId, ta: { result: "approved", status: "APPROVED" } });
+  assert.equal(f.operations.get(op.operationId)!.status, "APPROVED");
+  assert.equal(taRequests(f, "wake/ta/approve")[0]!.body.kr, null);
+  assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [1]);
+  assert.equal((await f.client.session()).epoch, 1);
+});
+
+test("a TA-only resend after the epoch moves seals that send with the current epoch", async () => {
+  const { f, op } = await ready();
+  f.taApproveResponse = async (attempt, response) => {
+    if (attempt === 1) {
+      assert.equal((await f.client.rekey()).epoch, 1);
+      advancePastEpochGrace(f);
+      throw new TypeError("lost");
+    }
+    return response;
+  };
+  const info = await f.client.approve(op.operationId);
+  assert.equal(info.ta.result, "approved");
+  assert.equal(f.taApproveBodies.length, 2);
+  assert.equal(f.taApproveBodies[0], f.taApproveBodies[1]);
+  const sent = f.requests.filter(h => h.context === "wake/ta/approve");
+  assert.deepEqual(sent.map(h => h.epoch), [0, 1]);
+  assert.equal(sent[0]!.requestId.equals(sent[1]!.requestId), false);
+  assert.equal(sent[0]!.iv.equals(sent[1]!.iv), false);
+  assert.equal((await f.client.session()).epoch, 1);
+});
+
+test("a TA+KR approve stays sealed with the epoch captured before WebAuthn", async () => {
+  const { f, op } = await ready();
+  const held = holdFirstAssertion(f);
+  const pending = f.client.approve(op.operationId, { rekey: true });
+  await held.arrived;
+  advancePastEpochGrace(f);
+  held.release();
+  const info = await pending;
+  assert.equal(info.ta.result, "approved");
+  assert.equal(info.kr!.result, "committed");
+  assert.equal((info.kr as { epoch: number }).epoch, 1);
+  assert.equal(f.currentEpoch, 1);
+  assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [0]);
+  assert.notEqual(taRequests(f, "wake/ta/approve")[0]!.body.kr, null);
+  assert.equal((await f.client.session()).epoch, 1);
+});
+
 test("a concurrent rekey while a TA+KR approval is pending is a conflict", async () => {
   const { f, op } = await ready();
   let release!: () => void;

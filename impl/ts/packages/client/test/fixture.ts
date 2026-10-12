@@ -80,7 +80,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     localTime: 1_000_000,
     serverTime: 2_000_000,
     assertionCalls: 0,
-    onAssertion: undefined as (() => void) | undefined,
+    onAssertion: undefined as (() => void | Promise<void>) | undefined,
     start: {
       version: "WAKE/1",
       exchangeId: encode(exchangeId),
@@ -298,7 +298,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
   };
   const getAssertion: GetAssertion = async (opts) => {
     f.assertionCalls++;
-    f.onAssertion?.();
+    await f.onAssertion?.();
     f.assertionOptions = opts;
     return {
       id: "AQ",

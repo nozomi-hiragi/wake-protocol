@@ -628,8 +628,10 @@ export class WakeClient {
   }
 
   /**
-   * Sends one idempotent plaintext sealed with the previous generation, resending it with a fresh requestId until
-   * the deadline. With `recoverKeys`, an unknown outcome is probed with the pending generation (§9.6).
+   * Sends one idempotent plaintext, resending it with a fresh requestId until the deadline.
+   * A rotation is sealed with `previous`. When `currentKeys` is set (TA-only approve), each attempt is sealed
+   * with the epoch that function returns at send time. With `recoverKeys`, an unknown outcome is probed with
+   * the pending generation (§9.6).
    */
   async #completeRotation(
     state: SessionState,
@@ -639,6 +641,7 @@ export class WakeClient {
     plaintext: Bytes,
     deadline: number,
     recoverKeys: EpochState | undefined,
+    currentKeys?: () => EpochState,
   ): Promise<
     { recovered: false; plaintext: Uint8Array } |
     { recovered: true; info: WakeSessionInfo }
@@ -652,7 +655,9 @@ export class WakeClient {
         if (this.#now() >= deadline) {
           throw new WakeError("expired");
         }
-        const pending = await this.#sealRequest(state, context, plaintext, previous);
+        // Read at send time. `previous` is the object captured before WebAuthn; a TA-only approval must not keep it.
+        const keys = currentKeys === undefined ? previous : currentKeys();
+        const pending = await this.#sealRequest(state, context, plaintext, keys);
         this.#checkRotation(state, generation);
         sent = true;
         const received = await this.#sendRequest(state, pending, true);
@@ -963,7 +968,9 @@ export class WakeClient {
   /**
    * §10.11 steps 6-8. The challenge is computed over the CALLER's operationId, never one named by the server.
    * With `rekey`, the same signature also commits a key rotation (§10.8); the new epoch is adopted only when the
-   * server reports `committed` and serverFinished verifies.
+   * server reports `committed` and serverFinished verifies. That TA+KR request stays sealed with the epoch
+   * captured before WebAuthn (§10.7). A TA-only approval is not epoch-bound, so each send uses the epoch current
+   * at send time: a rekey that commits while the prompt is open must not leave the approval on a retired generation.
    */
   async approve(operationIdHex: string, options: ApproveOptions = {}): Promise<ApproveInfo> {
     const id = parseOperationIdHex(operationIdHex);
@@ -1019,6 +1026,7 @@ export class WakeClient {
       })));
       const completed = await this.#completeRotation(
         state, generation, previous, "wake/ta/approve", plaintext, deadline, prepared?.keys,
+        prepared === undefined ? () => state.current : undefined,
       );
       if (completed.recovered) {
         // The old epoch is retired, so the commit happened: adopt the epoch confirmed by wake/session under it.
