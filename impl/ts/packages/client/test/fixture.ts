@@ -37,6 +37,7 @@ import {
   verifyClientFinished,
   DIR_C2S,
   DIR_S2C,
+  ET_BODY_MAX,
 } from "@wake-protocol/core";
 import type { EtRequest, C2sCryptoKey, S2cCryptoKey, MsgHeader, TranscriptHash, RekeyTranscriptHash, WebAuthnChallenge } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
@@ -123,6 +124,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
     taApproveKrMutate: undefined as ((value: Record<string, unknown>) => void) | undefined,
     paths: [] as string[],
     etRequests: [] as EtRequest[],
+    etBodyLimit: ET_BODY_MAX,
     etHandler: undefined as ((request: EtRequest) => Uint8Array) | undefined,
     upResponse: undefined as ((header: MsgHeader, response: Response) => Response | Promise<Response>) | undefined,
     upPlaintext: undefined as ((header: MsgHeader, plaintext: Uint8Array) => Uint8Array) | undefined,
@@ -427,7 +429,7 @@ export async function fixture(options: Partial<WakeClientOptions> = {}) {
         }
       } else if (p.header.context === "wake-et") {
         assert.equal(path, "/wake/transport");
-        const etRequest = decodeEtRequest(request.toUint8Array());
+        const etRequest = decodeEtRequest(request.toUint8Array(), { bodyLimit: f.etBodyLimit });
         f.etRequests.push(etRequest);
         plaintext = f.etHandler
           ? f.etHandler(etRequest)

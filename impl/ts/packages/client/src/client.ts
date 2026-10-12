@@ -36,6 +36,7 @@ import {
   openParsed,
   DIR_C2S,
   DIR_S2C,
+  ET_BODY_MAX,
 } from "@wake-protocol/core";
 import type {
   EtHeader,
@@ -70,6 +71,8 @@ export interface WakeClientOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Integer in 1..2**28; reservations include failed transmissions. */
   maxEncryptionsPerKey?: number;
+  /** Positive safe integer ET body limit in bytes (§11.2). Defaults to ET_BODY_MAX. */
+  etBodyLimit?: number;
 }
 
 export interface SessionInfo {
@@ -293,6 +296,7 @@ export class WakeClient {
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #maxEncryptions: number;
+  readonly #etBodyLimit: number;
   #state: SessionState | undefined;
   #generation = 0;
   #rekeying = false;
@@ -308,6 +312,11 @@ export class WakeClient {
       throw new WakeError("invalid_option");
     }
     this.#maxEncryptions = limit;
+    const bodyLimit = options.etBodyLimit === undefined ? ET_BODY_MAX : options.etBodyLimit;
+    if (!Number.isSafeInteger(bodyLimit) || bodyLimit < 1) {
+      throw new WakeError("invalid_option");
+    }
+    this.#etBodyLimit = bodyLimit;
   }
 
   get loggedIn(): boolean {
@@ -740,9 +749,9 @@ export class WakeClient {
       query,
       headers,
       body: new Bytes(body),
-    });
+    }, { bodyLimit: this.#etBodyLimit });
     const result = await this.#request("wake-et", encoded.toUint8Array(), false, "/wake/transport");
-    const et = decodeEtResponse(result);
+    const et = decodeEtResponse(result, { bodyLimit: this.#etBodyLimit });
     const out = new Headers();
     for (const [name, value] of et.headers) {
       out.append(name, value);

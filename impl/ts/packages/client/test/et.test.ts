@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes } from "@wake-protocol/bytes";
 import { bytesToUtf8, utf8ToBytes } from "@wake-protocol/codec";
-import { encodeEtResponse } from "@wake-protocol/core";
+import { encodeEtResponse, ET_BODY_MAX } from "@wake-protocol/core";
+import { WakeClient } from "../src/index.ts";
 import { fixture, hasCode, jsonResponse } from "./fixture.ts";
 
 const login = { mode: "discoverable" } as const;
@@ -58,12 +59,58 @@ test("wakeFetch validation errors are thrown before anything is sent", async () 
   await assert.rejects(f.client.wakeFetch("/a", { method: "TRACE" as never }), hasCode("invalid_method"));
   await assert.rejects(f.client.wakeFetch("/a", { headers: [["Bad Name", "v"]] }), hasCode("invalid_header"));
   await assert.rejects(f.client.wakeFetch("/a", { headers: [["Content-Type", "a"], ["content-type", "b"]] }), hasCode("invalid_header"));
-  await assert.rejects(f.client.wakeFetch("/a", { body: new Uint8Array(1024 * 1024 + 1) }), hasCode("too_large"));
+  await assert.rejects(f.client.wakeFetch("/a", { body: new Uint8Array(ET_BODY_MAX + 1) }), hasCode("too_large"));
   assert.equal(f.wires.length, before);
   // Boundary: exactly the limit is sent.
-  await f.client.wakeFetch("/a", { method: "POST", body: new Uint8Array(1024 * 1024) });
+  await f.client.wakeFetch("/a", { method: "POST", body: new Uint8Array(ET_BODY_MAX) });
   assert.equal(f.wires.length, before + 1);
 });
+
+test("wakeFetch uses a raised ET body limit for both requests and responses", async () => {
+  const bodyLimit = ET_BODY_MAX + 1;
+  const f = await fixture({ etBodyLimit: bodyLimit });
+  f.etBodyLimit = bodyLimit;
+  await f.client.login(login);
+  const body = new Uint8Array(bodyLimit).fill(0xa5);
+  f.etHandler = (request) => encodeEtResponse({
+    status: 200,
+    headers: [],
+    body: request.body,
+  }, { bodyLimit }).toUint8Array();
+  const response = await f.client.wakeFetch("/echo", { method: "POST", body });
+  assert.deepEqual(f.etRequests[0]!.body.toUint8Array(), body);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), body);
+  const before = f.wires.length;
+  await assert.rejects(f.client.wakeFetch("/echo", { body: new Uint8Array(bodyLimit + 1) }), hasCode("too_large"));
+  assert.equal(f.wires.length, before);
+});
+
+test("wakeFetch rejects response bodies above the configured ET body limit", async () => {
+  const f = await fixture({ etBodyLimit: 1 });
+  await f.client.login(login);
+  f.etHandler = () => etResponse(200, [], new Uint8Array(2));
+  await assert.rejects(f.client.wakeFetch("/a"), hasCode("too_large"));
+});
+
+for (const limit of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, null, "1"]) {
+  test(`reject invalid ET body limit ${limit}`, () => {
+    assert.throws(() => new WakeClient({
+      baseUrl: "",
+      getAssertion: async () => { throw new Error(); },
+      etBodyLimit: limit as number,
+    }), hasCode("invalid_option"));
+  });
+}
+
+for (const limit of [1, Number.MAX_SAFE_INTEGER]) {
+  test(`accept ET body limit boundary ${limit}`, () => {
+    assert.doesNotThrow(() => new WakeClient({
+      baseUrl: "",
+      getAssertion: async () => { throw new Error(); },
+      etBodyLimit: limit,
+    }));
+  });
+}
 
 test("wakeFetch surfaces a 404 route_not_found EtResponse as a Response", async () => {
   const f = await fixture();
