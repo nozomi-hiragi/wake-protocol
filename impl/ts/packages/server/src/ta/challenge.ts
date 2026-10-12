@@ -21,9 +21,13 @@ export async function challengeApproval(
     throw new WakeError("not_found");
   }
   const webauthn = await sessionWebauthnOptions(session, options);
+  const now = options.now();
+  const expiresAt = now + options.approvalTtlMs;
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
+    throw new RangeError("approval expiration");
+  }
   const approvalId = newApprovalId();
   const rekey = body.rekey ? await prepareRekey(session, options, approvalId) : null;
-  const now = options.now();
   const attempt = {
     approvalId,
     operationId,
@@ -31,7 +35,7 @@ export async function challengeApproval(
     approvalNonce: newApprovalNonce(),
     state: "PENDING" as const,
     createdAt: now,
-    expiresAt: now + options.approvalTtlMs,
+    expiresAt,
     ...(rekey ? { krExchangeId: rekey.record.exchangeId } : {}),
   };
   const result = await options.store.createApproval({ attempt, rekey, maxActiveApprovals: options.maxActiveApprovals, now });

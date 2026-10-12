@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Bytes, verifyApprovalBundle } from "@wake-protocol/core";
 import type { AssertionTamper } from "../src/testing.ts";
 import { SoftAuthenticator } from "../src/testing.ts";
-import { decode, encode, login, ORIGIN, RP, sendWire } from "./helpers.ts";
+import { decode, encode, fixture, login, ORIGIN, RP, sendWire } from "./helpers.ts";
 import { krClient, krOpen, krRequest, krWire } from "./kr-helpers.ts";
 import { approve, challenge, newOperation, prepareTa, secondUser, setup, ta, taError } from "./ta-helpers.ts";
 
@@ -237,6 +237,61 @@ test("the sixth challenge expires the oldest attempt only", async () => {
   const expired = await prepareTa(f, client, attempts[0]!, op.operationId);
   await taError(f, client, "approve", expired.body, "expired");
   assert.equal((await approve(f, client, await prepareTa(f, client, attempts[1]!, op.operationId))).json.operationId, op.operationId);
+});
+
+// The default 30-day hard cap overflows at login before an approval TTL of 300_000 ms can land on
+// 2^53-1. These shorter lifetimes leave approvalTtlMs as the longest sum, so that boundary is reachable.
+async function setupNearApprovalLimit() {
+  const approvalTtlMs = 300_000;
+  const f = await fixture({
+    approvalTtlMs,
+    exchangeTtlMs: 60_000,
+    webauthnTimeoutMs: 30_000,
+    authLifetimeMs: 2,
+    hardCapMs: 2,
+    idleTimeoutSec: 1,
+    maxOperationLifetimeMs: 10,
+    maxActiveApprovals: 1,
+    maxPendingRekeys: 1,
+  });
+  f.clock.now = Number.MAX_SAFE_INTEGER - approvalTtlMs;
+  return { f, client: krClient(await login(f)), approvalTtlMs };
+}
+
+test("challenge accepts an approval expiration of exactly 2^53-1", async () => {
+  const { f, client } = await setupNearApprovalLimit();
+  const plain = await newOperation(f, { ttlMs: 2 });
+  const bound = await newOperation(f, { ttlMs: 2 });
+  const attempt = await challenge(f, client, plain.operationId);
+  assert.equal(attempt.expiresAt, Number.MAX_SAFE_INTEGER);
+  assert.equal(attempt.kr, null);
+  const withKr = await challenge(f, client, bound.operationId, true);
+  assert.equal(withKr.expiresAt, Number.MAX_SAFE_INTEGER);
+  assert.ok(withKr.kr);
+  assert.equal((await f.store.getExchange(decode(withKr.kr.exchangeId), f.clock.now))?.state, "PENDING");
+});
+
+test("challenge past the safe-integer approval range is an encrypted internal and stores nothing", async () => {
+  const { f, client } = await setupNearApprovalLimit();
+  const plain = await newOperation(f, { ttlMs: 2 });
+  const bound = await newOperation(f, { ttlMs: 2 });
+  const attempt = await challenge(f, client, plain.operationId);
+  const withKr = await challenge(f, client, bound.operationId, true);
+  assert.ok(withKr.kr);
+  const exchangeId = withKr.kr.exchangeId;
+  let approvalWrites = 0;
+  const createApproval = f.store.createApproval.bind(f.store);
+  f.store.createApproval = async start => {
+    approvalWrites++;
+    return createApproval(start);
+  };
+  f.clock.now++;
+  await taError(f, client, "challenge", { operationId: plain.operationId, rekey: false }, "internal");
+  await taError(f, client, "challenge", { operationId: bound.operationId, rekey: true }, "internal");
+  assert.equal(approvalWrites, 0);
+  assert.equal((await f.store.getApproval(decode(attempt.approvalId), f.clock.now))?.state, "PENDING");
+  assert.equal((await f.store.getApproval(decode(withKr.approvalId), f.clock.now))?.state, "PENDING");
+  assert.equal((await f.store.getExchange(decode(exchangeId), f.clock.now))?.state, "PENDING");
 });
 
 test("maxActiveApprovals is configurable and counts per operation", async () => {
