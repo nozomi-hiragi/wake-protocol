@@ -69,16 +69,21 @@ KR・TA・ET を実装して（M3）、決める必要があった点です。�
 | TA+KR の `th` の `prevTh` | §10.7、§10.8 | §10.7 は `prevTh = session.cur_th` で計算するとしているが、それでは承認までの間に通常の KR が先に確定したとき、署名の検証自体が失敗し、TA の承認まで失敗する。§10.8 の「TA と KR を独立に判定する」を満たすため、交換の作成時に保存した `prevTh` と `target_epoch` で `th` を計算し、確定の条件で「`prevTh` が今のセッションの `th` と等しく、世代が current + 1 であること」を確かめる。食い違えば `kr.result = conflict` で、TA は承認される |
 | `already_decided`・`expired` の返し方 | §10.6、§12.4 | 承認試行そのものの問題（ない、別のセッション、期限切れ）は暗号化されたエラー。`wake/ta/challenge` で Operation が確定済み・期限切れのときもエラー。`wake/ta/approve`・`wake/ta/reject` での Operation の結果は、応答本文の `ta.result`・`result` で返す |
 | 有効な承認試行の上限を超えたとき | §10.6、§13 | §9.2 の KR 交換と同じく、最も古い承認試行を `EXPIRED` にしてから新しいものを作る |
+| TA+KR の交換と §9.2 の上限 | §9.2、§10.6 | 承認試行に結び付いた KR 交換も、セッションごとの PENDING な KR 交換の上限（既定3件）に数え、超えたら最も古いものから `SUPERSEDED` にする |
+| 承認と credential の停止の競合 | §6.5、§10.7 | 承認を確定する直前に credential を読み直し、active でなければセッションを失効させて `reauth` にする（Operation は変えない）。読み直しから確定までの短い間に停止された場合は、承認が確定しうる。アプリは承認結果を使うとき、`decidedByCredentialId` の credential の状態も確かめること |
+| 消費済みの承認試行の再送 | §10.7 | 保存した結果を返す前に、セッションと credential を確かめ直す。その承認試行で承認を確定した場合は `decidedByCredentialId` の credential も確かめ、停止・削除されていれば失効させて `reauth` にする（Operation は APPROVED のまま。確定した時点では有効だったため） |
 | `rekey: true` の承認試行に `kr: null` で承認したとき | §10.7 | 通常の TA として受け付け、結び付いていた KR 交換を `SUPERSEDED` にする |
 | TA+KR の KR 交換の期限 | §10.6、§13 | 結び付いた KR 交換の期限は交換の TTL、承認試行の期限は承認試行の TTL で、別々に判定する。KR 側だけが先に切れた場合は `kr.result = expired` で、TA は承認される |
 | 取消の記録 | §10.9、§10.10 | 確定した主体を `server` として記録する |
 | `createOperation` の入力の不正 | §10.2 | `content` の違反は `invalid_content`。`approverUserId`（1〜256バイトの正しい UTF-8）と `expiresAt` の違反は、§12 に該当するコードがないので `invalid_request` |
 | 認否記録の公開鍵 | §10.10、付録C | 付録C は COSE_Key だが、仮実装は SPKI を保存しているので、`credentialPublicKey` は SPKI の Base64url にする。認否記録には確定時点の公開鍵も保存し、あとで credential が変わっても検証できるようにする。core の `verifyApprovalBundle` が付録C の手順1〜5で検証する |
 | 承認画面の表示 | §10.11 手順5 | `content` と Nonce 行の間の本当の改行は改行の印で示す。`\n`（バックスラッシュと `n`）は左から順に2文字ずつ組にし、「改行として表示」を選んでも文字列は変えない。書式文字、異体字セレクター、私用領域、非文字、結合文字、U+0020 以外の空白を、コードポイントの印で可視化する |
-| 承認の応答が読めなかったとき（TA+KR） | §10.8、§9.6 | KR が確定したかどうか分からないので、クライアントはセッションを捨てて再ログインを求める |
+| 承認の応答が読めなかったとき（TA+KR） | §10.8、§9.6 | KR が確定したかどうか分からないので、クライアントはセッションを捨てて再ログインを求める。`epoch_retired` から新しい世代に回復できた場合は、同じ `wake/ta/approve` の平文を新しい世代で送り直し、サーバーが保存した結果（消費済みの承認試行の結果）を受け取る。Operation の状態から結果を推測しない |
+| KR の完了を送ったあと、期限まで結果が分からないとき | §9.6 | 世代を保存できないメモリだけのクライアントでは、旧世代を持ち続けても猶予期間のあとは `epoch_retired` が続くだけなので、`expired` を返してセッションを捨てる |
+| 今の世代への外側の `epoch_retired` | §12.3 | §12.3 は「最新世代を読み込み、新しい `requestId` で再送」とするが、メモリだけのクライアントには読み込める世代がほかにないので、`reauth` として扱いセッションを捨てる。旧世代で送った要求への `epoch_retired` はそのまま返す |
 | ET での §8.3 のエラー | §8.3、§11.6 | `stale_request` と `invalid_context` は、ほかの context と同じ平文の JSON `{"error":{"code"}}` で返す。§11.6 のルーティングのエラーは `EtResponse` で返す。`EtResponse` は u32 の長さで始まり `{` では始まらないので、クライアントは区別できる |
 | ET のハンドラーの失敗 | §11.6 | ハンドラーが例外を投げた場合や、不正な応答（status・ヘッダー・本文の上限）を返した場合は、500 の `EtResponse`（`{"error":{"code":"internal"}}`）を返す。§11.6 の表に該当する行がない。例外のメッセージは外に出さない |
-| ET の認証情報の `epoch` | §11.5 | 要求の鍵世代を渡す（猶予期間中は旧世代のことがある）。`credentialId` はセッションの `last_auth_credential_id` |
+| ET の認証情報の `epoch` | §11.5 | 要求の鍵世代を渡す（猶予期間中は旧世代のことがある）。`authTime` と `credentialId` も、その鍵世代を確立した認証のもの（KX または KR の時刻と credential）を渡す。旧世代の要求に新しい世代の値を渡さない |
 | ET の本文の上限と `maxPlaintext` | §8.7、§11.2 | ルートを登録した場合だけ、`maxPlaintext` が設定した本文の上限での最悪の `EtRequest` の長さ以上であることを設定の検査で求める |
 | `/wake/up` と `/wake/transport` の context | §11.1、§12.1 | `/wake/transport` は `wake-et` だけ、`/wake/up` は `wake-et` 以外だけを受け付け、どちらも違えば暗号化した `invalid_context` |
 

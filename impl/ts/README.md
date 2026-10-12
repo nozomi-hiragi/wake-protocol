@@ -150,6 +150,8 @@ await client.logout();               // wake/logout
 - 交換・セッションのストアは非同期のインターフェース（`WakeStore`）で、仮実装にはメモリのもの（`MemoryWakeStore`）だけがあります。鍵はプロセスのメモリに抽出不可の `CryptoKey` で置きます。DB に保存する場合は §8.10 の鍵の保護が必要です。`MemoryWakeStore` は交換を作るときに一定間隔（既定60秒）で期限切れの交換と終了したセッションを掃除します。要求が来ない間も掃除したい場合は、使う側が `sweep(now)` を定期的に呼びます。
 - クライアントの鍵はメモリにだけ置きます（IndexedDB、Web Locks、BroadcastChannel は使いません。§8.11、§9.7 の複数タブの協調は未実装）。ページを読み込み直すと、もう一度ログインが必要です。
 - §14.3 のレート制限は実装していません。本番で使わないでください。
+- `MemoryWakeStore` は、確定した Operation を監査のために消しません（PENDING のまま期限が切れたものも残ります）。長く動かすとメモリが増え続けます。
+- demo の `POST /api/operations` は、利用者が `content` を指定して自分宛ての Operation を作れる**デモ専用**の API です。§10.2 の「Operation は実装者のサーバーからだけ作成できる」から外れているので、実際のサービスでは、サーバーが業務の要求から `content` と認否者を決めてください。ユーザーごとの PENDING な Operation は20件までにしています。
 - 仕様が決めていない点の扱いは [SPEC-NOTES.md](SPEC-NOTES.md) にまとめています。
 
 WAKE API は core から、汎用ヘルパーは各パッケージから直接インポートします。core が汎用側から公開するのは、本文・平文用の `Bytes` と、導出鍵を取り込む `aesKey` / `hmacKey` だけです。
