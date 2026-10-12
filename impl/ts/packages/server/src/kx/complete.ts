@@ -163,6 +163,7 @@ function buildSession(
     userId: verified.credential.userId,
     loginCredentialId: verified.credential.credentialId.slice(),
     lastAuthCredentialId: verified.credential.credentialId.slice(),
+    authCredentialIds: [verified.credential.credentialId.slice()],
     establishedOrigin: verified.origin,
     status: "ACTIVE",
     currentEpoch: 0,

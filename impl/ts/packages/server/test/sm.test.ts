@@ -343,7 +343,8 @@ for (const revoke of ["session", "user", "credential", "lastAuthCredential"] as 
         insertSession(f.store, {
           ...s,
           loginCredentialId: new Uint8Array([2]),
-          lastAuthCredentialId: f.auth.credential.credentialId
+          lastAuthCredentialId: f.auth.credential.credentialId,
+          authCredentialIds: [new Uint8Array([2]), f.auth.credential.credentialId]
         });
       }
       if (revoke === "session") {
@@ -522,7 +523,8 @@ test(
         sessionId: unrelatedId,
         userId: "u2",
         loginCredentialId: new Uint8Array([9]),
-        lastAuthCredentialId: new Uint8Array([9])
+        lastAuthCredentialId: new Uint8Array([9]),
+        authCredentialIds: [new Uint8Array([9])]
       }
     );
     await f.server.revokeSessionsByUser("u1");

@@ -33,6 +33,7 @@ function sessionRecord(status: SessionRecord["status"] = "ACTIVE", overrides: Pa
     userId: "u1",
     loginCredentialId: new Uint8Array([1]),
     lastAuthCredentialId: new Uint8Array([1]),
+    authCredentialIds: [new Uint8Array([1])],
     establishedOrigin: ORIGIN,
     status,
     currentEpoch: 0,
@@ -142,7 +143,7 @@ test("revoking a session supersedes its PENDING exchanges only", async () => {
 test("every session end path supersedes pending exchanges via the index", async () => {
   const store = new MemoryWakeStore();
   const byUser = sessionRecord("ACTIVE", { userId: "u9" });
-  const byCredential = sessionRecord("ACTIVE", { loginCredentialId: new Uint8Array([7]), lastAuthCredentialId: new Uint8Array([7]) });
+  const byCredential = sessionRecord("ACTIVE", { loginCredentialId: new Uint8Array([7]), lastAuthCredentialId: new Uint8Array([7]), authCredentialIds: [new Uint8Array([7])] });
   const bySweep = sessionRecord("ACTIVE", { absoluteExpiresAt: 50 });
   const byLogout = sessionRecord();
   const all = [byUser, byCredential, bySweep, byLogout];
@@ -274,4 +275,19 @@ test("listOperations returns only the approver's operations in (createdAt, opera
     [first.operationId],
   );
   assert.equal((await store.listOperations({ approverUserId: "user0", status: "EXPIRED", limit: 100, now: 1000 })).length, 11);
+});
+
+test("session credential history is deep-copied on insertion and retrieval", async () => {
+  const store = new MemoryWakeStore();
+  const record = sessionRecord();
+  insertSession(store, record);
+  record.authCredentialIds[0]![0] = 9;
+  record.authCredentialIds.push(new Uint8Array([2]));
+  const returned = (await store.getSession(record.sessionId.toUint8Array()))!;
+  assert.deepEqual(returned.authCredentialIds, [new Uint8Array([1])]);
+  returned.authCredentialIds[0]![0] = 8;
+  returned.authCredentialIds.push(new Uint8Array([3]));
+  assert.deepEqual((await store.getSession(record.sessionId.toUint8Array()))!.authCredentialIds, [new Uint8Array([1])]);
+  await store.revokeSessionsByCredential(new Uint8Array([1]));
+  assert.equal((await store.getSession(record.sessionId.toUint8Array()))!.status, "REVOKED");
 });

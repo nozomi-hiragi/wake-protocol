@@ -98,6 +98,7 @@ function cloneSession(s: SessionRecord): SessionRecord {
     ...s,
     loginCredentialId: s.loginCredentialId.slice(),
     lastAuthCredentialId: s.lastAuthCredentialId.slice(),
+    authCredentialIds: s.authCredentialIds.map(credentialId => credentialId.slice()),
     ...(s.currentKeys ? { currentKeys: cloneEpochKeys(s.currentKeys) } : {}),
     ...(s.prevKeys ? { prevKeys: cloneEpochKeys(s.prevKeys) } : {}),
   };
@@ -413,6 +414,9 @@ export class MemoryWakeStore implements WakeStore {
     s.authTime = c.authTime;
     s.absoluteExpiresAt = Math.min(s.hardCapAt, c.absoluteExpiresAt);
     s.lastAuthCredentialId = c.credentialId.slice();
+    if (!s.authCredentialIds.some(credentialId => id(credentialId) === id(c.credentialId))) {
+      s.authCredentialIds.push(c.credentialId.slice());
+    }
     return "committed";
   }
 
@@ -537,7 +541,7 @@ export class MemoryWakeStore implements WakeStore {
   async revokeSessionsByCredential(credentialId: Uint8Array): Promise<void> {
     const key = id(credentialId);
     for (const s of this.#sessions.values()) {
-      if (id(s.loginCredentialId) === key || id(s.lastAuthCredentialId) === key) {
+      if (s.authCredentialIds.some(credentialId => id(credentialId) === key)) {
         this.#revoke(s);
       }
     }

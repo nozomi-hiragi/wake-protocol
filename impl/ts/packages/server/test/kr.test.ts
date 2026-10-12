@@ -836,3 +836,26 @@ for (const [field, length] of [
     await completeKr(f, client, p);
   });
 }
+
+test("revoking an intermediate KR credential revokes the session after later rekeys", async () => {
+  const f = await fixture();
+  const client = krClient(await login(f));
+  const b = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  const c = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  f.credentials.setCredential(b.credential);
+  f.credentials.setCredential(c.credential);
+  const middle = await prepareKr(f, client, {}, b);
+  await completeKr(f, client, middle);
+  const latest = await prepareKr(f, middle.next, {}, c);
+  await completeKr(f, middle.next, latest);
+  const repeated = await prepareKr(f, latest.next, {}, c);
+  await completeKr(f, latest.next, repeated);
+  assert.deepEqual((await session(f, repeated.next)).authCredentialIds, [
+    f.auth.credential.credentialId, b.credential.credentialId, c.credential.credentialId,
+  ]);
+  await f.server.revokeSessionsByCredential(new Uint8Array([0]));
+  assert.equal((await session(f, repeated.next)).status, "ACTIVE");
+  await f.server.revokeSessionsByCredential(b.credential.credentialId);
+  assert.equal((await session(f, repeated.next)).status, "REVOKED");
+  await expectError(await sendWire(f, await krWire(f, repeated.next, "wake/session")), 401, "reauth", true);
+});

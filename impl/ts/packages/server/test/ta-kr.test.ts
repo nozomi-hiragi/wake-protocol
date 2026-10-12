@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes, verifyApprovalBundle } from "@wake-protocol/core";
+import { SoftAuthenticator } from "../src/testing.ts";
 import { decode, encode, ORIGIN, RP, sendWire } from "./helpers.ts";
 import { completeKr, krError, krRequest, krStart, krWire, prepareKr } from "./kr-helpers.ts";
 import { approve, challenge, newOperation, prepareTa, setup, ta, taError, verifyKrCommitted } from "./ta-helpers.ts";
@@ -309,4 +310,25 @@ test("TA+KR approve with the old epoch is refused once the grace period is over"
   const retried = await krRequest(f, plain.next, "wake/ta/approve", prepared.body);
   assert.deepEqual(retried.json.kr, { result: "conflict" });
   assert.deepEqual(retried.json.ta, { result: "approved", status: "APPROVED" });
+});
+
+test("revoking an intermediate TA+KR credential revokes the session after a later KR", async () => {
+  const s = await setup();
+  const { f, client } = s;
+  const b = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  const c = await SoftAuthenticator.create({ rpId: RP, origin: ORIGIN, userId: "u1" });
+  f.credentials.setCredential(b.credential);
+  f.credentials.setCredential(c.credential);
+  const op = await newOperation(f);
+  const middle = await prepareTa(f, client, await challenge(f, client, op.operationId, true), op.operationId, { auth: b });
+  await verifyKrCommitted(middle, (await approve(f, client, middle)).json.kr as Record<string, unknown>);
+  const latest = await prepareKr(f, middle.next!, {}, c);
+  await completeKr(f, middle.next!, latest);
+  assert.deepEqual((await sessionState(s)).authCredentialIds, [
+    f.auth.credential.credentialId, b.credential.credentialId, c.credential.credentialId,
+  ]);
+  await f.server.revokeSessionsByCredential(new Uint8Array([0]));
+  assert.equal((await sessionState(s)).status, "ACTIVE");
+  await f.server.revokeSessionsByCredential(b.credential.credentialId);
+  assert.equal((await sessionState(s)).status, "REVOKED");
 });

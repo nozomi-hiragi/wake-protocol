@@ -53,6 +53,8 @@ export interface SessionRecord {
   userId: string;
   loginCredentialId: Uint8Array;
   lastAuthCredentialId: Uint8Array;
+  /** Unique credentials used by login and every committed rekey. */
+  authCredentialIds: Uint8Array[];
   establishedOrigin: string;
   status: "ACTIVE" | "REVOKED" | "EXPIRED";
   currentEpoch: number;
