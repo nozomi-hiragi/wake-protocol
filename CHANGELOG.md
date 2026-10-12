@@ -35,7 +35,7 @@
   - `EpochKeys`: 旧 `{ c2s, s2c, th, c2sCount, s2cCount }`。新 `authTime`（その鍵世代を確立した認証の時刻）と `credentialId`（その認証の credential）が必須。保存済みのセッションを移行する場合は、現世代に `authTime = SessionRecord.authTime`、`credentialId = lastAuthCredentialId` を入れる
   - `ExchangeRecord` に KR 用の任意の項目（`targetEpoch`、`prevTh`、`createdAt`、`boundApprovalId`、`reauthenticatedCredentialId`）が加わる。保存・読み出しで項目を落とさないこと。M2 からある `SessionRecord` の `prevKeys` / `prevValidUntil` は、KR で実際に使われるようになる
   - `SessionRecord`: 新 `authCredentialIds`（ログインと各 KR・TA+KR で使った credential ID の集合）が必須。`revokeSessionsByCredential` はこのどれかに一致するセッションを失効させる（§6.5）。保存済みのセッションには、`loginCredentialId` と `lastAuthCredentialId` を入れる
-- M3 で見つかった仕様の論点（TA+KR の `prevTh`、`already_decided` と `expired` の返し方、ET での §8.3 のエラーなど）を `impl/ts/SPEC-NOTES.md` に記録
+- M3 で見つかった仕様の論点（TA+KR の `prevTh` は §10.7 の文面どおりに決着、`already_decided` と `expired` の返し方、ET での §8.3 のエラーなど）を `impl/ts/SPEC-NOTES.md` に記録
 - codec に厳密な I-JSON のパーサー `parseIJson`、crypto に ECDSA の DER と `r‖s` の変換（`ecdsaDerToRaw` / `ecdsaRawToDer`）と P-256 の署名検証（`importP256SpkiPublicKey` / `p256EcdsaVerify`）、定数時間の比較（`constantTimeEqual`）を追加
 - 依存を追加: demo の実行時に `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）、開発用に `esbuild` 0.28.2（MIT）と `@playwright/test` 1.63.0（Apache-2.0）。いずれもバージョンを完全に固定
 - M2 で見つかった仕様の論点（公開鍵を SPKI で保存、署名カウンターの更新の原子性、期限の境界など）を `impl/ts/SPEC-NOTES.md` に記録

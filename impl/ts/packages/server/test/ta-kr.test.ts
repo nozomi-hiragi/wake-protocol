@@ -63,28 +63,30 @@ test("a replayed TA+KR approve returns the identical response with the old epoch
   assert.equal((await f.credentials.getCredential(f.auth.credential.credentialId))!.signCount, 2);
 });
 
-test("a KR conflict leaves the TA approval intact", async () => {
+test("a plain KR between challenge and approve is webauthn_failed and commits nothing", async () => {
   const s = await setup();
   const { f, client } = s;
   const op = await newOperation(f);
   const ch = await challenge(f, client, op.operationId, true);
-  // A plain KR moves the epoch while the TA+KR attempt is outstanding.
+  // The signature is over the th from the challenge. The plain KR moves cur_th before approve.
   const plain = await prepareKr(f, client);
   await completeKr(f, client, plain);
   const prepared = await prepareTa(f, client, ch, op.operationId);
-  const result = await approve(f, client, prepared);
-  assert.deepEqual(result.json, {
-    operationId: op.operationId,
-    ta: { result: "approved", status: "APPROVED" },
-    kr: { result: "conflict" },
-  });
+  await taError(f, client, "approve", prepared.body, "webauthn_failed");
+  assert.equal((await f.store.getApproval(decode(ch.approvalId), f.clock.now))?.state, "PENDING");
+  assert.equal((await f.store.getExchange(decode(ch.kr!.exchangeId), f.clock.now))?.state, "PENDING");
+  assert.equal((await f.server.getOperation(op.operationId))?.status, "PENDING");
   const state = await sessionState(s);
-  assert.equal(state.currentEpoch, 1);
+  assert.equal(state.currentEpoch, plain.next.epoch);
   assert.ok(state.currentKeys?.th.equals(plain.th));
-  assert.equal((await f.store.getExchange(decode(ch.kr!.exchangeId), f.clock.now))?.state, "SUPERSEDED");
-  assert.equal((await f.server.getOperation(op.operationId))?.status, "APPROVED");
-  // Without the plain KR the approve would have used epoch 0; the committed plain epoch still works.
-  assert.equal((await krRequest(f, plain.next, "wake/session")).json.epoch, 1);
+  // A fresh challenge under the plain-KR epoch signs the current th and commits both.
+  const next = plain.next;
+  const againCh = await challenge(f, next, op.operationId, true);
+  const again = await prepareTa(f, next, againCh, op.operationId);
+  const result = await approve(f, next, again);
+  assert.deepEqual(result.json.ta, { result: "approved", status: "APPROVED" });
+  await verifyKrCommitted(again, result.json.kr as Record<string, unknown>);
+  assert.equal((await sessionState(s)).currentEpoch, next.epoch + 1);
 });
 
 test("an expired KR exchange leaves the TA approval intact and changes no epoch", async () => {
@@ -306,10 +308,11 @@ test("TA+KR approve with the old epoch is refused once the grace period is over"
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { wakeError: "epoch_retired" });
   assert.equal((await f.server.getOperation(op.operationId))?.status, "PENDING");
-  // The same approve under the new epoch's keys reports the conflict.
-  const retried = await krRequest(f, plain.next, "wake/ta/approve", prepared.body);
-  assert.deepEqual(retried.json.kr, { result: "conflict" });
-  assert.deepEqual(retried.json.ta, { result: "approved", status: "APPROVED" });
+  // The body was signed over the pre-KR th, so the new epoch rejects it and commits nothing.
+  await taError(f, plain.next, "approve", prepared.body, "webauthn_failed");
+  assert.equal((await f.store.getApproval(decode(ch.approvalId), f.clock.now))?.state, "PENDING");
+  assert.equal((await f.server.getOperation(op.operationId))?.status, "PENDING");
+  assert.equal((await f.store.getSession(client.sessionId.toUint8Array()))?.currentEpoch, plain.next.epoch);
 });
 
 test("revoking an intermediate TA+KR credential revokes the session after a later KR", async () => {

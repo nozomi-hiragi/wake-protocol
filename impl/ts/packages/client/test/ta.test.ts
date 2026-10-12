@@ -246,6 +246,19 @@ test("TA+KR non-I-JSON completion recovers the epoch even if its stored result i
   assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [0, 1]);
 });
 
+test("an authenticated TA+KR webauthn_failed keeps the epoch and does not recover", async () => {
+  const { f, op } = await ready();
+  f.taApproveError = "webauthn_failed";
+  await assert.rejects(f.client.approve(op.operationId, { rekey: true }), hasCode("webauthn_failed"));
+  assert.equal(f.client.loggedIn, true);
+  assert.equal(f.currentEpoch, 0);
+  assert.equal(f.taApproveBodies.length, 1);
+  assert.deepEqual(f.sleeps, []);
+  assert.deepEqual(f.requests.filter(h => h.context === "wake/ta/approve").map(h => h.epoch), [0]);
+  assert.ok(!f.requests.some(h => h.epoch === 1));
+  assert.equal((await f.client.session()).epoch, 0);
+});
+
 for (const result of ["conflict", "expired"] as const) {
   test(`TA+KR ${result} keeps the current epoch and discards the pending generation`, async () => {
     const { f, op } = await ready();

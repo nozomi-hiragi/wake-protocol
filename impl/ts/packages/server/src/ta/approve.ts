@@ -129,16 +129,16 @@ async function plan(req: ApproveRequest, att: ApprovalRecord, session: SessionRe
     return { challenge: await taChallenge(ta), kr: null };
   }
   const ex = await boundExchange(req.kr, att, session, options);
-  if (!ex.prevTh || ex.targetEpoch === undefined) {
+  const current = session.currentKeys;
+  if (!current || ex.targetEpoch === undefined) {
     throw new WakeError("not_found");
   }
-  // prevTh is the th the exchange was created against (the session's cur_th then). A later epoch change shows up
-  // as a KR conflict while the signature, made over that th, still verifies for the TA part (§10.8).
+  // §10.7: prevTh is the session's cur_th now. A KR since the challenge makes this signature fail.
   const th = await rekeyTranscriptHash({
     exchangeId: ex.exchangeId,
     sessionId: session.sessionId,
     epoch: ex.targetEpoch,
-    prevTh: ex.prevTh,
+    prevTh: current.th,
     serverNonce: ex.serverNonce,
     serverPublicKey: ex.serverPublicKey,
     clientPublicKey: req.kr.clientPublicKey,
