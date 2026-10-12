@@ -56,6 +56,32 @@ KX と SM をブラウザと Node のサーバーで動かして（M2）、決�
 | 終了したセッションの保持 | §8.1、付録A | 失効・期限切れのセッションは、鍵をすぐ消し、記録は保持期間（既定10分）のあとで消す。メモリのストアは、交換を作るときに一定間隔で期限切れの交換とセッションを掃除する |
 | クライアントの予約 context | §8.8 | 汎用の `request()` では、`wake/` と `wake-` で始まる context を送らない（`bad_request`）。`wake/logout` を通すと、サーバーだけ失効してローカルの鍵が残るため |
 
+## M3 で見つかった論点
+
+KR・TA・ET を実装して（M3）、決める必要があった点です。書き方は M2 の節と同じです。
+
+| 論点 | 仕様の箇所 | 仮実装での扱い |
+|---|---|---|
+| KR の暗号化されたエラー | §9.4、§12.4 | 交換がない・別のセッションのもの・承認試行に結び付いたもの・`kind` が違うものは `not_found`。`PENDING` でない、または期限切れは `expired`。世代が進んでいれば交換を `SUPERSEDED` にして `conflict`。WebAuthn と `clientFinished` の失敗は `webauthn_failed`（交換は変えない） |
+| `wake/kr/start` の期限 | §9.2、§7.7 | §9.2 の応答には `serverTime` がないが、暗号化通信の中ではクライアントが認証済みの offset（§8.5）を持っているので、`expiresAt − offset` で端末の時刻に換算できる。§7.2 のように `serverTime` を足す必要はない |
+| KR の確定後に credential が停止されていた場合 | §6.5、§9.4 | KX と同じく、確定のあとで credential を読み直し、停止・削除されていればセッションを失効させる。KR では応答を外側の `reauth` にする（セッションがもう使えないため） |
+| 署名カウンターの競合（KR・TA） | §6.4 | KX と同じ規則。BE が0の credential は確定前に条件付き更新を行う。負けた側は、再送応答を返せればそれを返し、交換や承認試行がまだ `PENDING` なら外側の `retry`、それ以外は `webauthn_failed` |
+| TA+KR の `th` の `prevTh` | §10.7、§10.8 | §10.7 は `prevTh = session.cur_th` で計算するとしているが、それでは承認までの間に通常の KR が先に確定したとき、署名の検証自体が失敗し、TA の承認まで失敗する。§10.8 の「TA と KR を独立に判定する」を満たすため、交換の作成時に保存した `prevTh` と `target_epoch` で `th` を計算し、確定の条件で「`prevTh` が今のセッションの `th` と等しく、世代が current + 1 であること」を確かめる。食い違えば `kr.result = conflict` で、TA は承認される |
+| `already_decided`・`expired` の返し方 | §10.6、§12.4 | 承認試行そのものの問題（ない、別のセッション、期限切れ）は暗号化されたエラー。`wake/ta/challenge` で Operation が確定済み・期限切れのときもエラー。`wake/ta/approve`・`wake/ta/reject` での Operation の結果は、応答本文の `ta.result`・`result` で返す |
+| 有効な承認試行の上限を超えたとき | §10.6、§13 | §9.2 の KR 交換と同じく、最も古い承認試行を `EXPIRED` にしてから新しいものを作る |
+| `rekey: true` の承認試行に `kr: null` で承認したとき | §10.7 | 通常の TA として受け付け、結び付いていた KR 交換を `SUPERSEDED` にする |
+| TA+KR の KR 交換の期限 | §10.6、§13 | 結び付いた KR 交換の期限は交換の TTL、承認試行の期限は承認試行の TTL で、別々に判定する。KR 側だけが先に切れた場合は `kr.result = expired` で、TA は承認される |
+| 取消の記録 | §10.9、§10.10 | 確定した主体を `server` として記録する |
+| `createOperation` の入力の不正 | §10.2 | `content` の違反は `invalid_content`。`approverUserId`（1〜256バイトの正しい UTF-8）と `expiresAt` の違反は、§12 に該当するコードがないので `invalid_request` |
+| 認否記録の公開鍵 | §10.10、付録C | 付録C は COSE_Key だが、仮実装は SPKI を保存しているので、`credentialPublicKey` は SPKI の Base64url にする。認否記録には確定時点の公開鍵も保存し、あとで credential が変わっても検証できるようにする。core の `verifyApprovalBundle` が付録C の手順1〜5で検証する |
+| 承認画面の表示 | §10.11 手順5 | `content` と Nonce 行の間の本当の改行は改行の印で示す。`\n`（バックスラッシュと `n`）は左から順に2文字ずつ組にし、「改行として表示」を選んでも文字列は変えない。書式文字、異体字セレクター、私用領域、非文字、結合文字、U+0020 以外の空白を、コードポイントの印で可視化する |
+| 承認の応答が読めなかったとき（TA+KR） | §10.8、§9.6 | KR が確定したかどうか分からないので、クライアントはセッションを捨てて再ログインを求める |
+| ET での §8.3 のエラー | §8.3、§11.6 | `stale_request` と `invalid_context` は、ほかの context と同じ平文の JSON `{"error":{"code"}}` で返す。§11.6 のルーティングのエラーは `EtResponse` で返す。`EtResponse` は u32 の長さで始まり `{` では始まらないので、クライアントは区別できる |
+| ET のハンドラーの失敗 | §11.6 | ハンドラーが例外を投げた場合や、不正な応答（status・ヘッダー・本文の上限）を返した場合は、500 の `EtResponse`（`{"error":{"code":"internal"}}`）を返す。§11.6 の表に該当する行がない。例外のメッセージは外に出さない |
+| ET の認証情報の `epoch` | §11.5 | 要求の鍵世代を渡す（猶予期間中は旧世代のことがある）。`credentialId` はセッションの `last_auth_credential_id` |
+| ET の本文の上限と `maxPlaintext` | §8.7、§11.2 | ルートを登録した場合だけ、`maxPlaintext` が設定した本文の上限での最悪の `EtRequest` の長さ以上であることを設定の検査で求める |
+| `/wake/up` と `/wake/transport` の context | §11.1、§12.1 | `/wake/transport` は `wake-et` だけ、`/wake/up` は `wake-et` 以外だけを受け付け、どちらも違えば暗号化した `invalid_context` |
+
 ## 確認できたこと（v0.4 時点）
 
 - §4.2 の例 `LP(ascii("ab"), ε) = 00000002 6162 00000000` は実装と一致した。

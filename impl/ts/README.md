@@ -13,8 +13,8 @@
 | `packages/crypto`（`@wake-protocol/crypto`） | `Uint8Array` 用の Web Crypto API ヘルパー。`@scure/base` 2.4.0 に依存 |
 | `packages/core`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
 | `packages/vectors`（`@wake-protocol/vectors`） | §16 テストベクターの生成と照合。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
-| `packages/server`（`@wake-protocol/server`） | KX と SM のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
-| `packages/client`（`@wake-protocol/client`） | KX と SM のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
+| `packages/server`（`@wake-protocol/server`） | KX、SM、KR、TA、ET のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
+| `packages/client`（`@wake-protocol/client`） | KX、SM、KR、TA、ET のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
 | `packages/demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
 
 `packages/` の主なファイル（各パッケージの `index.ts` が入口）:
@@ -51,6 +51,7 @@
 | `core/src/msg/aead.ts` | §8.3 暗号化メッセージの Seal / Open |
 | `core/src/ta/content.ts` | §10.4 文面プロファイルの検査 |
 | `core/src/ta/operation.ts` | §10.3 `hashInput`、`operationId`、操作識別子の生成 |
+| `core/src/ta/bundle.ts` | 付録C 認否記録の検証（`verifyApprovalBundle`） |
 | `core/src/et/types.ts` | §11.2 `EtRequest` / `EtResponse` の型、ラベル、上限 |
 | `core/src/et/validate.ts` | §11.2–11.4 メソッド、パス、クエリー、ヘッダー、ステータスの検査 |
 | `core/src/et/codec.ts` | §11.2 リクエスト・レスポンスのエンコード / デコード |
@@ -67,20 +68,35 @@
 | `server/src/http.ts` | §4.4、§4.8、§12 本文の読み取りと上限、JSON、エラー応答 |
 | `server/src/kx/start.ts` | §6.6、§7.2 `POST /auth/start` |
 | `server/src/kx/complete.ts` | §7.5、§7.6 `POST /auth/complete` |
-| `server/src/webauthn/verify.ts` | §6.2–§6.4 assertion の検証 |
-| `server/src/sm/up.ts` | §8.3–§8.7、§12.3、§12.4 `POST /wake/up` |
+| `server/src/webauthn/verify.ts` | §6.2–§6.4 assertion の検証（KX・KR・TA の儀式ごとの origin とユーザーの照合） |
+| `server/src/webauthn/counter.ts` | §6.4 署名カウンターの条件付き更新と、確定後の更新 |
+| `server/src/webauthn/finalize.ts` | §6.5 確定後のセッションと credential の再確認 |
+| `server/src/webauthn/options.ts` | §6.1 WebAuthn のオプション |
+| `server/src/kr/start.ts` | §9.2 `wake/kr/start` |
+| `server/src/kr/complete.ts` | §9.3、§9.4 `wake/kr/complete` |
+| `server/src/kr/finish.ts` | §9.4 KR と TA+KR に共通の鍵導出と `clientFinished` の検証 |
+| `server/src/ta/operations.ts` | §10.2、§10.9、§10.10 `createOperation` / `cancelOperation` / `getOperation` / `exportApprovalBundle` |
+| `server/src/ta/list.ts` | §10.6 `wake/ta/list`、`wake/ta/get` |
+| `server/src/ta/challenge.ts` | §10.6 `wake/ta/challenge`（承認試行と、TA+KR の KR 交換） |
+| `server/src/ta/approve.ts` | §10.7、§10.8 `wake/ta/approve` |
+| `server/src/ta/reject.ts` | §10.9 `wake/ta/reject` |
+| `server/src/et/transport.ts` | §11 `POST /wake/transport` のルーティング |
+| `server/src/sm/up.ts` | §8.3–§8.7、§12.3、§12.4 `POST /wake/up` と `POST /wake/transport` に共通の処理 |
 | `server/src/sm/session.ts` | §12.2 `wake/session` の応答 |
 | `server/src/sm/lifetime.ts` | §8.1 セッションの期限 |
 | `server/src/store/types.ts` | §6.5、§7.4、§8.1 ストアのインターフェース |
 | `server/src/store/memory.ts` | §7.4–§7.6、§8.9 メモリのストア |
 | `server/src/testing.ts` | §6 テスト用のソフトウェアのパスキー `SoftAuthenticator` |
-| `client/src/client.ts` | §7.7、§8 `WakeClient` |
+| `client/src/client.ts` | §7.7、§8、§9、§11 `WakeClient`（ログイン、暗号化通信、`rekey`、`wakeFetch`） |
+| `client/src/ta.ts` | §10.6、§10.11 `listOperations` / `getOperation` / `approve` / `reject` |
+| `client/src/display.ts` | §10.11 手順5 `hashInput` の表示用の分割（`segmentHashInput`） |
 | `client/src/assertion.ts` | §6.1 ブラウザの `navigator.credentials.get` の呼び出し |
 | `client/src/json.ts` | §4.4、§4.8 受け取った JSON と Base64url の検査 |
-| `demo/src/app.ts` | デモのサーバー。WAKE の範囲外のパスキー登録を含む |
-| `demo/src/browser/main.ts` | デモの画面 |
-| `demo/test/integration.test.ts` | client と server の結合テスト |
-| `demo/test/e2e/login.spec.ts` | Chromium の仮想認証器を使う e2e |
+| `demo/src/app.ts` | デモのサーバー。WAKE の範囲外のパスキー登録と、ET のルート（`/api/me`、`/api/operations`、`/api/operation`）を含む |
+| `demo/src/browser/main.ts` | デモの画面（ログイン、セッション、KR、ET、Operation の作成と確認） |
+| `demo/src/browser/approve.ts` | §10.11 の承認画面 |
+| `demo/test/integration.test.ts`、`demo/test/wake.test.ts` | client と server の結合テスト（KX、SM、KR、TA、TA+KR、ET） |
+| `demo/test/e2e/login.spec.ts`、`demo/test/e2e/operations.spec.ts` | Chromium の仮想認証器を使う e2e |
 
 `npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import でき、宣言はパッケージ自身の `devDependencies` にだけできます。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
 
@@ -95,7 +111,7 @@ npm run typecheck
 npm test          # 依存の検査、テストベクターの照合、node:crypto との突き合わせ、往復テスト、client と server の結合テスト
 npm run vectors   # spec/test-vectors/*.json を再生成
 npx playwright install chromium   # 初回だけ。e2e 用のブラウザ
-npm run e2e       # demo の e2e（登録 → ログイン → wake/session → ログアウト）
+npm run e2e       # demo の e2e（登録、ログイン、ログアウト、KR、Operation の承認・拒否、TA+KR）
 npm start         # デモを http://localhost:8787 で起動（手元のパスキーで試せる）
 ```
 
@@ -120,14 +136,21 @@ import { WakeClient, navigatorGetAssertion } from "@wake-protocol/client";
 const client = new WakeClient({ baseUrl: "", getAssertion: navigatorGetAssertion });
 await client.login({ mode: "discoverable" });
 const info = await client.session(); // wake/session
+await client.rekey();                // WAKE-KR（§9）
+const op = await client.getOperation(operationIdHex); // §10.11 手順1〜4の検査つき
+await client.approve(operationIdHex, { rekey: false }); // WAKE-TA（true で TA+KR）
+const res = await client.wakeFetch("/api/me");          // WAKE-ET（Response を返す）
 await client.logout();               // wake/logout
 ```
 
+- Operation の作成・取消・結果の取得はサーバー側の API（`wake.createOperation` / `cancelOperation` / `getOperation`）で行います。利用者向けの作成 API はありません（§10.2）。
+- ET のルートは `createWakeServer({ routes: [{ method, path, handler }] })` で登録します。ハンドラーは認証情報（`userId`、`sessionId`、`epoch` など）をプロセス内のオブジェクトで受け取ります（§11.5）。
+
 - credential の公開鍵は SPKI（ブラウザの `getPublicKey()` の値）で保存します。対応する署名方式は ES256 だけです。
 - 交換・セッションのストアは非同期のインターフェース（`WakeStore`）で、仮実装にはメモリのもの（`MemoryWakeStore`）だけがあります。鍵はプロセスのメモリに抽出不可の `CryptoKey` で置きます。DB に保存する場合は §8.10 の鍵の保護が必要です。`MemoryWakeStore` は交換を作るときに一定間隔（既定60秒）で期限切れの交換と終了したセッションを掃除します。要求が来ない間も掃除したい場合は、使う側が `sweep(now)` を定期的に呼びます。
-- クライアントの鍵はメモリにだけ置きます（IndexedDB には保存しません）。ページを読み込み直すと、もう一度ログインが必要です。
+- クライアントの鍵はメモリにだけ置きます（IndexedDB、Web Locks、BroadcastChannel は使いません。§8.11、§9.7 の複数タブの協調は未実装）。ページを読み込み直すと、もう一度ログインが必要です。
 - §14.3 のレート制限は実装していません。本番で使わないでください。
-- 仕様が決めていない点の扱いは [SPEC-NOTES.md](SPEC-NOTES.md#m2-で見つかった論点) にまとめています。
+- 仕様が決めていない点の扱いは [SPEC-NOTES.md](SPEC-NOTES.md) にまとめています。
 
 WAKE API は core から、汎用ヘルパーは各パッケージから直接インポートします。core が汎用側から公開するのは、本文・平文用の `Bytes` と、導出鍵を取り込む `aesKey` / `hmacKey` だけです。
 
@@ -214,4 +237,4 @@ core は、既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_
 
 - [x] M1: 暗号コアとテストベクター
 - [x] M2: KX と SM をブラウザ（パスキー）と Node サーバーで端から端まで動かす
-- [ ] M3: KR、TA、ET
+- [x] M3: KR、TA、ET

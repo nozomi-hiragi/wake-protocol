@@ -12,8 +12,8 @@
 @wake-protocol/core     bytes、codec、crypto、@scure/base    WAKE プロトコル
           ↑
 @wake-protocol/vectors  core、bytes、codec、@scure/base      §16 テストベクターの生成と照合（開発用）
-@wake-protocol/server   core、bytes、codec、crypto、@scure/base   KX と SM のサーバー（フレームワーク非依存）
-@wake-protocol/client   core、bytes、codec、@scure/base           KX と SM のクライアント（ブラウザと Node）
+@wake-protocol/server   core、bytes、codec、crypto、@scure/base   WAKE のサーバー（フレームワーク非依存）
+@wake-protocol/client   core、bytes、codec、@scure/base           WAKE のクライアント（ブラウザと Node）
           ↑
 @wake-protocol/demo     server、client、codec、crypto、@scure/base、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```

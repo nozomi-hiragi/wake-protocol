@@ -25,6 +25,11 @@
 - 仮実装 M2: `@wake-protocol/server`（KX と SM のサーバー。フレームワーク非依存の `handle(req: Request)`、§6.2 の WebAuthn 検証、§7.5・§7.6 の原子的で冪等な確定、`/wake/up` の §8.3 の処理順と §8.6 の鍵世代の表、`wake/session`・`wake/logout`、失効 API、メモリのストア、テスト用の `SoftAuthenticator`）を追加
 - 仮実装 M2: `@wake-protocol/client`（ブラウザと Node で動く KX と SM のクライアント。抽出不可の鍵、`/auth/complete` の同一本文での再送、`serverFinished` の検証、時刻の補正、`stale_request` での再送、ログアウト）を追加
 - 仮実装 M2: `@wake-protocol/demo`（Hono によるデモアプリ、パスキーの登録画面、client と server の結合テスト、Chromium の仮想認証器を使う Playwright の e2e）を追加
+- 仮実装 M3: WAKE-KR（§9）を server と client に追加。鍵世代の原子的な更新、旧世代の猶予期間、同一平文の再送と `epoch_retired` からの回復、同時に PENDING にできる KR 交換の上限
+- 仮実装 M3: WAKE-TA と TA+KR（§10）を追加。server に Operation の作成・取消・取得と認否記録（付録C の形式での書き出しを含む）、`wake/ta/list`・`get`・`challenge`・`approve`・`reject`。client に §10.11 の検査つきの取得と承認、承認画面の表示用の `segmentHashInput`。core に認否記録の検証 `verifyApprovalBundle`
+- 仮実装 M3: WAKE-ET（§11）を追加。server に `/wake/transport` と完全一致のルート登録、client に `wakeFetch`
+- 仮実装 M3: demo に KR・TA・ET の画面、承認画面、結合テストと e2e を追加
+- M3 で見つかった仕様の論点（TA+KR の `prevTh`、`already_decided` と `expired` の返し方、ET での §8.3 のエラーなど）を `impl/ts/SPEC-NOTES.md` に記録
 - codec に厳密な I-JSON のパーサー `parseIJson`、crypto に ECDSA の DER と `r‖s` の変換（`ecdsaDerToRaw` / `ecdsaRawToDer`）と P-256 の署名検証（`importP256SpkiPublicKey` / `p256EcdsaVerify`）、定数時間の比較（`constantTimeEqual`）を追加
 - 依存を追加: demo の実行時に `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）、開発用に `esbuild` 0.28.2（MIT）と `@playwright/test` 1.63.0（Apache-2.0）。いずれもバージョンを完全に固定
 - M2 で見つかった仕様の論点（公開鍵を SPKI で保存、署名カウンターの更新の原子性、期限の境界など）を `impl/ts/SPEC-NOTES.md` に記録
