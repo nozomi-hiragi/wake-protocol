@@ -30,3 +30,8 @@ test("dependency checker accepts valid directions and ignores unrelated strings 
   const result = checkDependencies(fileURLToPath(new URL("valid", fixtures)));
   assert.deepEqual(result, { offenders: [], count: 5 });
 });
+
+test("dependency checker accepts a non-glob workspace entry next to a glob entry", () => {
+  const result = checkDependencies(fileURLToPath(new URL("workspace-layout", fixtures)));
+  assert.deepEqual(result, { offenders: [], count: 2 });
+});
