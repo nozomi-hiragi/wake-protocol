@@ -48,6 +48,7 @@
 - 仕様: `/auth/start` の応答に `serverTime` を追加（§7.2）。クライアントは `/auth/complete` の再送の期限を `expiresAt − serverTime` から端末の時刻で求める（§7.7）。端末の時計がずれていると、`/auth/complete` を1回も送らずに失敗していたため
 - core に、受け取った JSON と Base64url の項目を検査する `parseJsonObject` / `decodeBase64urlField` を追加し、server と client で共有
 - 仕様書を v0.5 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v04からの主な変更)）。TA文面のプロファイル簡素化、ETの責任範囲の整理、テストベクターのエラーコード定義など
+- TypeScript の仮実装のフォルダを `impl/ts/{core,client,server,demo}` に整理。共通の `bytes` / `codec` / `crypto` / `vectors` と WAKE 本体（`core/protocol`、パッケージ名は `@wake-protocol/core` のまま）は `core/` の下に置く。パッケージ名と API は変更なし
 
 ## v0.4.0 (2026-10-10)
 

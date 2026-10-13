@@ -18,8 +18,8 @@
 @wake-protocol/demo     server、client、codec、crypto、@scure/base、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```
 
-- **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。
-- **core** は汎用パッケージを組み合わせて WAKE を実装します。中は `spec/`（ラベル・ブランド型・エラーなど仕様全体の定義）、`keys/`、`kx/`、`msg/`、`ta/`、`et/` に分けています。
+- **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。置き場所は `core/bytes`、`core/codec`、`core/crypto` です。
+- **core**（置き場所は `core/protocol`、パッケージ名は `@wake-protocol/core`）は汎用パッケージを組み合わせて WAKE を実装します。中は `spec/`（ラベル・ブランド型・エラーなど仕様全体の定義）、`keys/`、`kx/`、`msg/`、`ta/`、`et/` に分けています。
 - **vectors** は開発用の道具です。製品のコードから vectors に依存してはいけません。
 - **server** と **client** は互いに依存しません。両者は §7・§8・§12 のワイヤ形式（JSON と `Wire`）だけでつながります。client と server を組み合わせるテストは、両方に依存できる demo に置きます。
 - server は `Request` を受け取り `Response` を返す関数（`handle`）だけを持ち、Web フレームワークに依存しません。WebAuthn の検証（§6.2）は server の `webauthn/` に自前で書いています（理由は §5）。
@@ -73,7 +73,7 @@ WAKE には32バイトの値がたくさんあり、引数を取り違えても�
 - 鍵は役割ごとの型にします。`aesKey` は `C2sKey` / `S2cKey` だけを受け取り、`C2sCryptoKey` / `S2cCryptoKey` を返します。Finished 鍵をメッセージの暗号化に使うこと（§5.6 で禁止）は、型の段階で防げます。
 - ブランドは実行時には消えます。実行時にも守る必要がある条件（AES-256 の鍵長、IV の長さ）は、汎用の crypto で検査します。
 - `fixedLength<B extends string>(name, len)` はブランドの識別子を型引数に取り、`Brand<B>` を返す検査関数を作ります。`Byte4` のようなクラス型を型引数で偽れないようにするためです。
-- 「通ってはいけない呼び出し」は、テストに `// @ts-expect-error` で書きます（`packages/core/test/key-roles.test.ts`）。`npm run typecheck` はテストも対象です。
+- 「通ってはいけない呼び出し」は、テストに `// @ts-expect-error` で書きます（`core/protocol/test/key-roles.test.ts`）。`npm run typecheck` はテストも対象です。
 
 ### 2.9 受け取ったバイト列は厳密に分解する
 WAKE の構造は LP（u32 の長さ ‖ 中身の繰り返し）で組み立てます。区切り文字を使わないので、どんなバイト列を並べても分け方が1通りに決まり、組み立て方も1通りしかありません。そのため、クライアントとサーバーが別々に組み立てた Transcript や Finished の入力が一致し、ET はエスケープなしで任意のバイトを運べます。

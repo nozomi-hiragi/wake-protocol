@@ -7,7 +7,10 @@
     "node": ">=22.18"
   },
   "workspaces": [
-    "packages/*"
+    "core/*",
+    "client",
+    "server",
+    "demo"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",
