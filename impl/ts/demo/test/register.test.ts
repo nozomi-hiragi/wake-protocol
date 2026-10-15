@@ -22,7 +22,7 @@ interface Tamper {
   rawId?: Uint8Array;
   coseSpki?: Uint8Array | "other";
   cutAuthData?: boolean;
-  clientDataJSON?: string;
+  clientDataJSON?: string | ((challenge: string) => string);
 }
 
 async function post(app: ReturnType<typeof createDemoApp>["app"], path: string, body: unknown) {
@@ -46,11 +46,13 @@ async function credentialFor(options: { challenge: string; }, key: Awaited<Retur
     coseSpki: input.coseSpki === "other" ? other : input.coseSpki,
   };
   const rawId = tamper.rawId ?? crypto.getRandomValues(new Uint8Array(32));
-  const clientData = tamper.clientDataJSON ?? JSON.stringify({
-    type: tamper.type ?? "webauthn.create",
-    challenge: tamper.challenge ?? options.challenge,
-    origin: tamper.origin ?? ORIGIN,
-  });
+  const clientData = typeof tamper.clientDataJSON === "function" ?
+    tamper.clientDataJSON(options.challenge) :
+    tamper.clientDataJSON ?? JSON.stringify({
+      type: tamper.type ?? "webauthn.create",
+      challenge: tamper.challenge ?? options.challenge,
+      origin: tamper.origin ?? ORIGIN,
+    });
   const header = new Uint8Array(55);
   header.set(await sha256(utf8ToBytes(tamper.rpId ?? RP)));
   header[32] = tamper.flags ?? 0x45;
@@ -142,7 +144,10 @@ const rejected: [string, Tamper][] = [
   ["COSE_Key coordinates differ from the SPKI", { coseSpki: "other" }],
   ["not a P-256 SPKI", { spki: new Uint8Array(91) }],
   ["duplicate JSON key in clientData", {
-    clientDataJSON: `{"type":"webauthn.create","type":"webauthn.create","challenge":"x","origin":"${ORIGIN}"}`,
+    clientDataJSON: (challenge: string) => `{"type":"webauthn.create","type":"webauthn.create","challenge":"${challenge}","origin":"${ORIGIN}"}`,
+  }],
+  ["unsafe integer in clientData", {
+    clientDataJSON: (challenge: string) => `{"type":"webauthn.create","challenge":"${challenge}","origin":"${ORIGIN}","unsafe":1e300}`,
   }],
 ];
 
@@ -197,6 +202,7 @@ test("verify without options, or with a bad body, is a 400", async () => {
   assert.equal((await post(demo.app, "/register/options", "not json")).status, 400);
   assert.equal((await post(demo.app, "/register/options", { username: "" })).status, 400);
   assert.equal((await post(demo.app, "/register/options", '{"username":"a","username":"b"}')).status, 400);
+  assert.equal((await post(demo.app, "/register/options", '{"username":"a","unsafe":1e300}')).status, 400);
 });
 
 

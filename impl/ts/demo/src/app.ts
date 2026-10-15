@@ -47,6 +47,20 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// i-json strict mode checks only plain integer literals, so reject values like 1e300 here as core's parseJsonObject does.
+function hasUnsafeInteger(value: unknown): boolean {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && !Number.isSafeInteger(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasUnsafeInteger);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some(hasUnsafeInteger);
+  }
+  return false;
+}
+
 function field(value: unknown, name: string): Record<string, unknown> {
   if (!isObject(value) || !isObject(value[name])) {
     throw new BadRequest();
@@ -83,7 +97,7 @@ async function readJson(c: Context): Promise<Record<string, unknown>> {
     }
     throw e;
   }
-  if (!isObject(value)) {
+  if (hasUnsafeInteger(value) || !isObject(value)) {
     throw new BadRequest();
   }
   return value;
@@ -144,7 +158,7 @@ async function verifyRegistration(
     }
     throw e;
   }
-  if (!isObject(clientData) || clientData.type !== "webauthn.create" || clientData.origin !== options.origin) {
+  if (hasUnsafeInteger(clientData) || !isObject(clientData) || clientData.type !== "webauthn.create" || clientData.origin !== options.origin) {
     throw new BadRequest();
   }
   if (typeof clientData.challenge !== "string" || !same(binary(clientData.challenge), pending.challenge)) {
@@ -245,6 +259,9 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
         let content: unknown;
         try {
           const value = parse(req.body, { strict: true, maxDepth: 64 });
+          if (hasUnsafeInteger(value)) {
+            return etError(400, "invalid_request");
+          }
           content = isObject(value) ? value.content : undefined;
         } catch (e) {
           if (e instanceof IJsonError) {

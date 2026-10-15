@@ -259,7 +259,7 @@ test("ET: invalid input, unknown routes and other users' operations", async () =
   assert.equal(wrongMethod.status, 404);
   const post = (body: string) =>
     client.wakeFetch("/api/operations", { method: "POST", headers: { "content-type": "application/json" }, body });
-  for (const bad of ["not json", "[]", "{}", '{"content":1}']) {
+  for (const bad of ["not json", "[]", "{}", '{"content":1}', '{"content":"ok","unsafe":9007199254740992.0}']) {
     const res = await post(bad);
     assert.equal(res.status, 400, bad);
     assert.deepEqual(await res.json(), { error: { code: "invalid_request" } });
