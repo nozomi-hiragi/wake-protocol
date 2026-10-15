@@ -49,7 +49,7 @@
 - core に、受け取った JSON と Base64url の項目を検査する `parseJsonObject` / `decodeBase64urlField` を追加し、server と client で共有
 - 仕様書を v0.5 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v04からの主な変更)）。TA文面のプロファイル簡素化、ETの責任範囲の整理、テストベクターのエラーコード定義など
 - TypeScript の仮実装のフォルダを `impl/ts/{core,client,server,demo}` に整理。共通の `bytes` / `codec` / `crypto` / `vectors` と WAKE 本体（`core/protocol`、パッケージ名は `@wake-protocol/core` のまま）は `core/` の下に置く。パッケージ名と API は変更なし
-- コーデック API の破壊的変更: `parseIJson` を削除。旧 `parseIJson(text)` は `@nozomi-hiragi/i-json` の `parse(bytesOrText, { strict: true })`、または core の `parseJsonObject` に置き換える。非文字と、倍精度で表せない精度の小数は拒否する
+- コーデック API の破壊的変更: `parseIJson` を削除。旧 `parseIJson(text)` と同等の検査を行うには core の `parseJsonObject` を使う（UTF-8 のバイト列とエラーコードを受け取り、トップレベルはオブジェクトに限る）。`@nozomi-hiragi/i-json` の `parse` を直接呼ぶ場合は `{ strict: true, maxDepth: 64 }` を指定し、値全体をたどって絶対値が 2⁵³ 以上の整数を別途拒否する。非文字と、倍精度で表せない精度の小数は拒否する
 
 ## v0.4.0 (2026-10-10)
 

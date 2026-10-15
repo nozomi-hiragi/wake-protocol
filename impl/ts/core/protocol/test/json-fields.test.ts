@@ -27,6 +27,19 @@ test("parseJsonObject rejects duplicate keys, invalid JSON and invalid UTF-8 wit
 
 const objectWith = (value: string) => utf8ToBytes(`{"v":${value}}`);
 
+test("parseJsonObject accepts valid values of every type matching JSON.parse", () => {
+  const inputs = [
+    "null", "true", "false", "0", "-0", "1.5", "-2.25", "1e2", "1E+2", "1e-2", "0.5e1", "123456789",
+    '""', '"abc"', '"a\\"b\\\\c\\/d\\b\\f\\n\\r\\t"', '"\\u0041\\u00e9\\u3042"', '"\\ud83d\\ude00"', '"😀あ"',
+    "[]", "{}", "[1,2,3]", '{"a":1,"b":[true,null,{"c":"d"}]}', '{"":1}', '{"a\\u0062":2}', "[[[[]]]]",
+    '[{"a":{"b":{"c":[1,[2,[3]]]}}}]',
+  ];
+  for (const text of inputs) {
+    assert.deepEqual(parseJsonObject(objectWith(text), "bad_request").v, JSON.parse(text), text);
+  }
+  assert.ok(Object.is(parseJsonObject(objectWith("-0"), "bad_request").v, -0));
+});
+
 test("parseJsonObject accepts safe integers and rejects 2^53 and above, including exponent and fraction forms", () => {
   assert.equal(parseJsonObject(objectWith("9007199254740991"), "bad_request").v, 2 ** 53 - 1);
   assert.equal(parseJsonObject(objectWith("-9007199254740991"), "bad_request").v, -(2 ** 53 - 1));
