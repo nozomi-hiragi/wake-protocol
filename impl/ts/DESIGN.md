@@ -9,13 +9,13 @@
 @wake-protocol/codec    依存なし       長さ付き符号化（LP）、ASCII / Latin-1 / UTF-8
 @wake-protocol/crypto   @scure/base    Web Crypto のラッパー（SHA-256、HMAC、HKDF、AES-256-GCM、P-256）
           ↑
-@wake-protocol/core     bytes、codec、crypto、@scure/base    WAKE プロトコル
+@wake-protocol/core     bytes、codec、crypto、@scure/base、@nozomi-hiragi/i-json    WAKE プロトコル
           ↑
 @wake-protocol/vectors  core、bytes、codec、@scure/base      §16 テストベクターの生成と照合（開発用）
 @wake-protocol/server   core、bytes、codec、crypto、@scure/base   WAKE のサーバー（フレームワーク非依存）
 @wake-protocol/client   core、bytes、codec、@scure/base           WAKE のクライアント（ブラウザと Node）
           ↑
-@wake-protocol/demo     server、client、codec、crypto、@scure/base、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
+@wake-protocol/demo     server、client、codec、crypto、@scure/base、@nozomi-hiragi/i-json、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```
 
 - **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。置き場所は `core/bytes`、`core/codec`、`core/crypto` です。
@@ -131,7 +131,7 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 | 暗号 | 標準の Web Crypto API を使う |
 | WebAuthn の検証 | 自前（server の `webauthn/`）。`@simplewebauthn/server` は依存が多く、§6.4 の署名カウンターの規則（BE が1なら値が戻っても受理する）とも合わない。必要なのは ES256 の assertion の検証だけで、CBOR の解析も要らない（公開鍵は SPKI で保存する。SPEC-NOTES.md） |
 | ECDSA の DER 署名 | 自前（crypto の `ecdsaDerToRaw` / `ecdsaRawToDer`）。Web Crypto は `r‖s` 形式しか受け付けない。厳密な DER の解析は50行ほどで、非最小の整数・余分なバイト・長形式の長さを拒否することをテストで確かめている |
-| 厳密な JSON（I-JSON） | 自前（codec の `parseIJson`）。`JSON.parse` は重複したキーや孤立サロゲートを受け付けてしまう。§4.8 はこれらの拒否を求める |
+| 厳密な JSON（I-JSON） | `@nozomi-hiragi/i-json` 0.1.2（MIT、依存なし）を採用。受け取る側の検査（§4.8: 重複キー、孤立サロゲート、整数の範囲など）を満たす npm / JSR のライブラリは、これ以外になかった。strict モードに加え、WAKE 側で整数値の検査を行う（`parseJsonObject`）。作者自身のパッケージで、まだ広くは使われていない |
 | HTTP サーバー（demo のみ） | `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）。どちらも実行時の依存がない。server 本体は `Request` / `Response` だけを使うので、フレームワークは差し替えられる |
 | ブラウザ用のバンドル（demo の開発用） | `esbuild` 0.28.2（MIT）。実行時の依存はなく、プラットフォームごとのバイナリを `optionalDependencies`（`@esbuild/<OS>-<CPU>`）で持つ。`postinstall` スクリプト（`install.js`）がバイナリの場所を確かめて最適化するが、`npm ci --ignore-scripts` で実行しなくても、optionalDependencies のバイナリで動く |
 | e2e（demo の開発用） | `@playwright/test` 1.63.0（Apache-2.0）。依存は `playwright` だけ。Chromium の仮想認証器（CDP の `WebAuthn` ドメイン）で、ブラウザのパスキーを使ったログインを確かめる |

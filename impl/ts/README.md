@@ -11,11 +11,11 @@
 | `core/bytes`（`@wake-protocol/bytes`） | 不変のバイト値、固定幅整数、ブランド型。依存なし |
 | `core/codec`（`@wake-protocol/codec`） | `Uint8Array` 用の LP、文字列。依存なし |
 | `core/crypto`（`@wake-protocol/crypto`） | `Uint8Array` 用の Web Crypto API ヘルパー。`@scure/base` 2.4.0 に依存 |
-| `core/protocol`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
+| `core/protocol`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto、`@scure/base` 2.4.0、`@nozomi-hiragi/i-json` 0.1.2 に依存 |
 | `core/vectors`（`@wake-protocol/vectors`） | §16 テストベクターの生成と照合。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
 | `server`（`@wake-protocol/server`） | KX、SM、KR、TA、ET のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
 | `client`（`@wake-protocol/client`） | KX、SM、KR、TA、ET のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
-| `demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
+| `demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`@nozomi-hiragi/i-json` 0.1.2、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
 
 主なファイル（パスは `impl/ts/` からの相対。各パッケージの `index.ts` が入口）:
 
@@ -24,7 +24,6 @@
 | `core/bytes/src/bytes.ts` | §4.1 不変所有の `Bytes` と、`.number` を持つ固定幅 `Byte` / `Byte2` / `Byte4` / `Byte8` |
 | `core/codec/src/length-prefixed.ts` | §4.2 LP とフィールド長の検査 |
 | `core/codec/src/text.ts` | §4 ASCII、Latin-1、UTF-8 の変換 |
-| `core/codec/src/json.ts` | §4.8 厳密な I-JSON の解析（キーの重複、孤立サロゲート、2⁵³以上の整数を拒否） |
 | `core/bytes/src/bigint.ts` | 整数の `number` / `bigint` 変換 |
 | `core/bytes/src/brand.ts` | ブランド型の共通定義 |
 | `core/crypto/src/hash.ts` | §5.1 SHA-256、HKDF、HMAC、乱数 |

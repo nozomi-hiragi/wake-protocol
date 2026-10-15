@@ -12,6 +12,7 @@
     "e2e": "playwright test -c playwright.config.ts"
   },
   "dependencies": {
+    "@nozomi-hiragi/i-json": "0.1.2",
     "@wake-protocol/server": "0.0.0",
     "@wake-protocol/client": "0.0.0",
     "@wake-protocol/codec": "0.0.0",

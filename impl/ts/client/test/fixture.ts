@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { base64urlnopad, hex } from "@scure/base";
 import { Bytes } from "@wake-protocol/bytes";
-import { bytesToUtf8, parseIJson, utf8ToBytes } from "@wake-protocol/codec";
+import { bytesToUtf8, utf8ToBytes } from "@wake-protocol/codec";
 import {
   aesKey,
   asExchangeId,
@@ -53,7 +53,7 @@ export const jsonResponse = (value: unknown, status = 200) => new Response(JSON.
   headers: { "Content-Type": "application/json" },
 });
 
-export const readJson = (text: string) => parseIJson(text) as Record<string, unknown>;
+export const readJson = (text: string) => parseJsonObject(utf8ToBytes(text), "bad_request");
 
 export const hasCode = (code: string) => (e: unknown) => e instanceof Error && "code" in e && e.code === code;
 
