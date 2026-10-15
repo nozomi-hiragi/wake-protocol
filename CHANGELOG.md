@@ -20,7 +20,7 @@
 - 数値のエラー方針を README と JSDoc に明記。`encodeRekeyTranscript` / `rekeyTranscriptHash` の `epoch` が整数でない・1未満・u32超過のいずれも `RangeError` に統一し、ベクター用の `bad_request` への変換は実行側へ移動。受信データのエラー変換は汎用の復号処理に限定
 - `Bytes` の配列要素は `Uint8Array` と同じ変換規則を使い、コピーにより秘密データの消去を保証できないことを文書化
 - core に `ET_REQUEST_MAX_ENCODED`（1,128,491バイト）と `ET_RESPONSE_MAX_ENCODED`（1,122,335バイト）を追加。ET の全上限と外側・入れ子の LP 長を含めて計算し、`DEFAULT_MAX_PLAINTEXT` を従来の1,114,112から両者の最大値である1,128,491バイトへ変更。既定の ET 上限の最悪ケースが暗号化・復号まで通ることをテストで確認
-- ベクターの再利用可能な生成・実行処理を `packages/vectors/src/` に移動し、scripts は生成 CLI の入口に限定。`@wake-protocol/vectors` のエクスポートと生成内容は維持
+- ベクターの再利用可能な生成・実行処理を `core/vectors/src/` に移動し、scripts は生成 CLI の入口に限定。`@wake-protocol/vectors` のエクスポートと生成内容は維持
 - ET 受信デコーダーに不正なバイト列を直接渡すテストを追加し、構造エラーと意味・上限のエラーコードを確認。core のヘッダーテストをメッセージ用のファイルへ整理し、汎用テストの重複を削除
 - 仮実装 M2: `@wake-protocol/server`（KX と SM のサーバー。フレームワーク非依存の `handle(req: Request)`、§6.2 の WebAuthn 検証、§7.5・§7.6 の原子的で冪等な確定、`/wake/up` の §8.3 の処理順と §8.6 の鍵世代の表、`wake/session`・`wake/logout`、失効 API、メモリのストア、テスト用の `SoftAuthenticator`）を追加
 - 仮実装 M2: `@wake-protocol/client`（ブラウザと Node で動く KX と SM のクライアント。抽出不可の鍵、`/auth/complete` の同一本文での再送、`serverFinished` の検証、時刻の補正、`stale_request` での再送、ログアウト）を追加

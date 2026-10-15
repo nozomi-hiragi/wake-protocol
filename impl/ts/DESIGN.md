@@ -158,6 +158,6 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
    - **はい** → 汎用パッケージに置く。バイト値・整数・型は bytes、符号化と文字列は codec、Web Crypto は crypto。どれにも収まらず、ほかの汎用パッケージに依存したくなったら、新しいパッケージにするか core に置くかを検討する（汎用パッケージどうしの依存は作らない）。
    - **いいえ** → core に置く。仕様全体で使う定義は `spec/`、それ以外は対応するモジュール（`keys/`、`kx/`、`msg/`、`ta/`、`et/`）。
    - WAKE のサーバー・クライアントとしての処理（HTTP の受け答え、状態の保存、WebAuthn の検証、再送）→ server または client。どちらにも必要な WAKE の定義は core に置く。
-2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/src/testing.ts`。サーバー側のテスト用の道具（`SoftAuthenticator`）→ `server/src/testing.ts`
-3. テストベクターの生成と実行 → `vectors/src/`。コマンドラインの入口は `vectors/scripts/` に薄く置く。
+2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/protocol/src/testing.ts`。サーバー側のテスト用の道具（`SoftAuthenticator`）→ `server/src/testing.ts`
+3. テストベクターの生成と実行 → `core/vectors/src/`。コマンドラインの入口は `core/vectors/scripts/` に薄く置く。
 4. client と server を組み合わせるテスト、デモ画面、e2e → demo
