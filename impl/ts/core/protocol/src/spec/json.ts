@@ -1,21 +1,44 @@
 // Spec §4.4, §4.8: strict JSON objects and canonical unpadded base64url fields.
+import { IJsonError, parse } from "@nozomi-hiragi/i-json";
 import { base64urlnopad } from "@scure/base";
-import { bytesToUtf8, parseIJson } from "@wake-protocol/codec";
-import { fail, remap } from "./errors.ts";
+import { fail } from "./errors.ts";
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /**
- * Parses strict UTF-8 and I-JSON (no duplicate keys, no lone surrogates) and requires an object.
- * Only RangeError, TypeError and SyntaxError from the generic layers become WakeError(code).
+ * Parses strict UTF-8 I-JSON and requires a non-array object.
+ * Duplicate keys, lone surrogates, noncharacters and nesting above 64 are rejected.
+ * Only IJsonError from the parser becomes WakeError(code); any other error propagates.
  */
 export function parseJsonObject(bytes: Uint8Array, code: string): Record<string, unknown> {
-  const text = remap(code, () => bytesToUtf8(bytes));
-  const value = remap(code, () => parseIJson(text));
+  let value: unknown;
+  try {
+    value = parse(bytes, { strict: true, maxDepth: 64 });
+  } catch (e) {
+    if (e instanceof IJsonError) fail(code, e.message);
+    throw e;
+  }
+  // i-json strict only checks plain integer literals; spec §4.8 rejects every integer of
+  // 2^53 or more, e.g. `1e300`, `9007199254740992.0`.
+  rejectUnsafeIntegers(value, code);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail(code);
   }
   return value as Record<string, unknown>;
+}
+
+function rejectUnsafeIntegers(value: unknown, code: string): void {
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) fail(code);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) rejectUnsafeIntegers(item, code);
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const item of Object.values(value)) rejectUnsafeIntegers(item, code);
+  }
 }
 
 /**

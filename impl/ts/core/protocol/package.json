@@ -13,6 +13,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@nozomi-hiragi/i-json": "0.1.2",
     "@wake-protocol/bytes": "0.0.0",
     "@wake-protocol/codec": "0.0.0",
     "@wake-protocol/crypto": "0.0.0",

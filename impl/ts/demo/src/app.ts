@@ -1,9 +1,10 @@
 // Demo server. Passkey registration here is NOT part of WAKE (spec §1); only /auth/* and /wake/* are.
 import { readFile } from "node:fs/promises";
+import { IJsonError, parse } from "@nozomi-hiragi/i-json";
 import { base64urlnopad } from "@scure/base";
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { bytesToUtf8, parseIJson, utf8ToBytes } from "@wake-protocol/codec";
+import { utf8ToBytes } from "@wake-protocol/codec";
 import { importP256SpkiPublicKey, randomBytes, sha256 } from "@wake-protocol/crypto";
 import { createWakeServer, MemoryCredentialStore, MemoryWakeStore } from "@wake-protocol/server";
 import type { EtAuth, EtRoute, EtRouteResponse, OperationView, WakeServer } from "@wake-protocol/server";
@@ -75,9 +76,9 @@ async function readJson(c: Context): Promise<Record<string, unknown>> {
   }
   let value: unknown;
   try {
-    value = parseIJson(bytesToUtf8(raw));
+    value = parse(raw, { strict: true, maxDepth: 64 });
   } catch (e) {
-    if (e instanceof SyntaxError || e instanceof RangeError || e instanceof TypeError) {
+    if (e instanceof IJsonError) {
       throw new BadRequest();
     }
     throw e;
@@ -136,9 +137,9 @@ async function verifyRegistration(
   const response = field(credential, "response");
   let clientData: unknown;
   try {
-    clientData = parseIJson(bytesToUtf8(binary(response.clientDataJSON)));
+    clientData = parse(binary(response.clientDataJSON), { strict: true, maxDepth: 64 });
   } catch (e) {
-    if (e instanceof SyntaxError || e instanceof RangeError || e instanceof TypeError) {
+    if (e instanceof IJsonError || e instanceof SyntaxError || e instanceof RangeError || e instanceof TypeError) {
       throw new BadRequest();
     }
     throw e;
@@ -243,10 +244,10 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
         }
         let content: unknown;
         try {
-          const value = parseIJson(bytesToUtf8(req.body));
+          const value = parse(req.body, { strict: true, maxDepth: 64 });
           content = isObject(value) ? value.content : undefined;
         } catch (e) {
-          if (e instanceof SyntaxError || e instanceof RangeError || e instanceof TypeError) {
+          if (e instanceof IJsonError) {
             return etError(400, "invalid_request");
           }
           throw e;
