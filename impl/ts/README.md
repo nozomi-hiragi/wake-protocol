@@ -8,61 +8,60 @@
 
 | パッケージ | 内容 |
 |---|---|
-| `packages/bytes`（`@wake-protocol/bytes`） | 不変のバイト値、固定幅整数、ブランド型。依存なし |
-| `packages/codec`（`@wake-protocol/codec`） | `Uint8Array` 用の LP、文字列。依存なし |
-| `packages/crypto`（`@wake-protocol/crypto`） | `Uint8Array` 用の Web Crypto API ヘルパー。`@scure/base` 2.4.0 に依存 |
-| `packages/core`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
-| `packages/vectors`（`@wake-protocol/vectors`） | §16 テストベクターの生成と照合。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
-| `packages/server`（`@wake-protocol/server`） | KX、SM、KR、TA、ET のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
-| `packages/client`（`@wake-protocol/client`） | KX、SM、KR、TA、ET のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
-| `packages/demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
+| `core/bytes`（`@wake-protocol/bytes`） | 不変のバイト値、固定幅整数、ブランド型。依存なし |
+| `core/codec`（`@wake-protocol/codec`） | `Uint8Array` 用の LP、文字列。依存なし |
+| `core/crypto`（`@wake-protocol/crypto`） | `Uint8Array` 用の Web Crypto API ヘルパー。`@scure/base` 2.4.0 に依存 |
+| `core/protocol`（`@wake-protocol/core`） | WAKE プロトコル。bytes / codec / crypto、`@scure/base` 2.4.0、`@nozomi-hiragi/i-json` 0.1.2 に依存 |
+| `core/vectors`（`@wake-protocol/vectors`） | §16 テストベクターの生成と照合。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
+| `server`（`@wake-protocol/server`） | KX、SM、KR、TA、ET のサーバー。フレームワークに依存せず、`Request` を受け取り `Response` を返す。core / bytes / codec / crypto と `@scure/base` 2.4.0 に依存 |
+| `client`（`@wake-protocol/client`） | KX、SM、KR、TA、ET のクライアント。ブラウザと Node で動く。core / bytes / codec と `@scure/base` 2.4.0 に依存 |
+| `demo`（`@wake-protocol/demo`） | デモアプリ、client と server の結合テスト、Playwright の e2e（開発用）。server / client / codec / crypto、`@scure/base` 2.4.0、`@nozomi-hiragi/i-json` 0.1.2、`hono` 4.13.13、`@hono/node-server` 2.1.3 に依存 |
 
-`packages/` の主なファイル（各パッケージの `index.ts` が入口）:
+主なファイル（パスは `impl/ts/` からの相対。各パッケージの `index.ts` が入口）:
 
 | ファイル | 仕様 |
 |---|---|
-| `bytes/src/bytes.ts` | §4.1 不変所有の `Bytes` と、`.number` を持つ固定幅 `Byte` / `Byte2` / `Byte4` / `Byte8` |
-| `codec/src/length-prefixed.ts` | §4.2 LP とフィールド長の検査 |
-| `codec/src/text.ts` | §4 ASCII、Latin-1、UTF-8 の変換 |
-| `codec/src/json.ts` | §4.8 厳密な I-JSON の解析（キーの重複、孤立サロゲート、2⁵³以上の整数を拒否） |
-| `bytes/src/bigint.ts` | 整数の `number` / `bigint` 変換 |
-| `bytes/src/brand.ts` | ブランド型の共通定義 |
-| `crypto/src/hash.ts` | §5.1 SHA-256、HKDF、HMAC、乱数 |
-| `crypto/src/aes.ts` | §8.3 AES-256-GCM |
-| `crypto/src/p256.ts` | §5.2 汎用 ECDH P-256 |
-| `crypto/src/ecdsa.ts` | §6.2 ECDSA の DER と `r‖s` の変換、P-256 の署名検証 |
-| `crypto/src/index.ts` | 汎用暗号ヘルパーのエクスポート |
-| `bytes/src/index.ts` | バイト値・整数・ブランド型のエクスポート |
-| `codec/src/index.ts` | 汎用コーデックのエクスポート |
-| `core/src/spec/crypto.ts` | §5.1、§8.3 鍵インポートと内部 AEAD 用の `Bytes` アダプター |
-| `core/src/spec/domain.ts` | §4.2、§5 ドメイン分離付き LP とラベルの検査 |
-| `core/src/spec/errors.ts` | §12 エラーコードと変換 |
-| `core/src/spec/labels.ts` | §4.7、§5.3–5.7、§8.2、§11.2 ドメイン分離ラベル |
-| `core/src/spec/limits.ts` | §12.3 長さ上限の検査 |
-| `core/src/spec/types.ts` | §4 固定長の WAKE ブランド型と検査 |
-| `core/src/keys/ids.ts` | §4.6、§5.3–5.4、§8.3、§10.3 固定長の識別子・Nonce・IV の生成 |
-| `core/src/keys/ecdh.ts` | §5.2 一時鍵の生成、公開鍵の検査、共有秘密 |
-| `core/src/kx/transcript.ts` | §5.3 ログイン・鍵更新の Transcript |
-| `core/src/kx/binding.ts` | §5.4 TA承認の結び付け |
-| `core/src/kx/challenge.ts` | §5.5 WebAuthn Challenge |
-| `core/src/kx/schedule.ts` | §5.6 鍵導出 |
-| `core/src/kx/finished.ts` | §5.7 Client / Server Finished と検証 |
-| `core/src/msg/header.ts` | §8.2、§8.7 メッセージヘッダー、Wire の解析、平文長の検査 |
-| `core/src/msg/aead.ts` | §8.3 暗号化メッセージの Seal / Open |
-| `core/src/ta/content.ts` | §10.4 文面プロファイルの検査 |
-| `core/src/ta/operation.ts` | §10.3 `hashInput`、`operationId`、操作識別子の生成 |
-| `core/src/ta/bundle.ts` | 付録C 認否記録の検証（`verifyApprovalBundle`） |
-| `core/src/et/types.ts` | §11.2 `EtRequest` / `EtResponse` の型、ラベル、上限 |
-| `core/src/et/validate.ts` | §11.2–11.4 メソッド、パス、クエリー、ヘッダー、ステータスの検査 |
-| `core/src/et/codec.ts` | §11.2 リクエスト・レスポンスのエンコード / デコード |
-| `core/src/index.ts` | §4–§11 公開 API |
-| `core/src/testing.ts` | §16 テスト専用ヘルパー |
-| `vectors/src/index.ts` | §16 ベクター生成・実行ヘルパーのエクスポート |
-| `vectors/src/generate-vectors.ts` | §16 固定入力から JSON ベクターを生成 |
-| `vectors/src/vector-ops.ts` | §16 ベクター入力を公開 API で実行 |
-| `vectors/scripts/generate-vectors.ts` | `src` の生成処理を呼ぶ CLI の入口 |
-| `vectors/test/vectors.test.ts` | §16 保存済みベクターと実装の照合 |
-| `vectors/test/generate.test.ts` | §16 生成結果の安定性の検査 |
+| `core/bytes/src/bytes.ts` | §4.1 不変所有の `Bytes` と、`.number` を持つ固定幅 `Byte` / `Byte2` / `Byte4` / `Byte8` |
+| `core/codec/src/length-prefixed.ts` | §4.2 LP とフィールド長の検査 |
+| `core/codec/src/text.ts` | §4 ASCII、Latin-1、UTF-8 の変換 |
+| `core/bytes/src/bigint.ts` | 整数の `number` / `bigint` 変換 |
+| `core/bytes/src/brand.ts` | ブランド型の共通定義 |
+| `core/crypto/src/hash.ts` | §5.1 SHA-256、HKDF、HMAC、乱数 |
+| `core/crypto/src/aes.ts` | §8.3 AES-256-GCM |
+| `core/crypto/src/p256.ts` | §5.2 汎用 ECDH P-256 |
+| `core/crypto/src/ecdsa.ts` | §6.2 ECDSA の DER と `r‖s` の変換、P-256 の署名検証 |
+| `core/crypto/src/index.ts` | 汎用暗号ヘルパーのエクスポート |
+| `core/bytes/src/index.ts` | バイト値・整数・ブランド型のエクスポート |
+| `core/codec/src/index.ts` | 汎用コーデックのエクスポート |
+| `core/protocol/src/spec/crypto.ts` | §5.1、§8.3 鍵インポートと内部 AEAD 用の `Bytes` アダプター |
+| `core/protocol/src/spec/domain.ts` | §4.2、§5 ドメイン分離付き LP とラベルの検査 |
+| `core/protocol/src/spec/errors.ts` | §12 エラーコードと変換 |
+| `core/protocol/src/spec/labels.ts` | §4.7、§5.3–5.7、§8.2、§11.2 ドメイン分離ラベル |
+| `core/protocol/src/spec/limits.ts` | §12.3 長さ上限の検査 |
+| `core/protocol/src/spec/types.ts` | §4 固定長の WAKE ブランド型と検査 |
+| `core/protocol/src/keys/ids.ts` | §4.6、§5.3–5.4、§8.3、§10.3 固定長の識別子・Nonce・IV の生成 |
+| `core/protocol/src/keys/ecdh.ts` | §5.2 一時鍵の生成、公開鍵の検査、共有秘密 |
+| `core/protocol/src/kx/transcript.ts` | §5.3 ログイン・鍵更新の Transcript |
+| `core/protocol/src/kx/binding.ts` | §5.4 TA承認の結び付け |
+| `core/protocol/src/kx/challenge.ts` | §5.5 WebAuthn Challenge |
+| `core/protocol/src/kx/schedule.ts` | §5.6 鍵導出 |
+| `core/protocol/src/kx/finished.ts` | §5.7 Client / Server Finished と検証 |
+| `core/protocol/src/msg/header.ts` | §8.2、§8.7 メッセージヘッダー、Wire の解析、平文長の検査 |
+| `core/protocol/src/msg/aead.ts` | §8.3 暗号化メッセージの Seal / Open |
+| `core/protocol/src/ta/content.ts` | §10.4 文面プロファイルの検査 |
+| `core/protocol/src/ta/operation.ts` | §10.3 `hashInput`、`operationId`、操作識別子の生成 |
+| `core/protocol/src/ta/bundle.ts` | 付録C 認否記録の検証（`verifyApprovalBundle`） |
+| `core/protocol/src/et/types.ts` | §11.2 `EtRequest` / `EtResponse` の型、ラベル、上限 |
+| `core/protocol/src/et/validate.ts` | §11.2–11.4 メソッド、パス、クエリー、ヘッダー、ステータスの検査 |
+| `core/protocol/src/et/codec.ts` | §11.2 リクエスト・レスポンスのエンコード / デコード |
+| `core/protocol/src/index.ts` | §4–§11 公開 API |
+| `core/protocol/src/testing.ts` | §16 テスト専用ヘルパー |
+| `core/vectors/src/index.ts` | §16 ベクター生成・実行ヘルパーのエクスポート |
+| `core/vectors/src/generate-vectors.ts` | §16 固定入力から JSON ベクターを生成 |
+| `core/vectors/src/vector-ops.ts` | §16 ベクター入力を公開 API で実行 |
+| `core/vectors/scripts/generate-vectors.ts` | `src` の生成処理を呼ぶ CLI の入口 |
+| `core/vectors/test/vectors.test.ts` | §16 保存済みベクターと実装の照合 |
+| `core/vectors/test/generate.test.ts` | §16 生成結果の安定性の検査 |
 | `server/src/server.ts` | §7、§8、§12 `createWakeServer`（`handle` と失効 API） |
 | `server/src/options.ts` | §13 設定の既定値と検査 |
 | `server/src/http.ts` | §4.4、§4.8、§12 本文の読み取りと上限、JSON、エラー応答 |
@@ -248,9 +247,9 @@ core は、既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_
 ## テストベクター
 
 [`spec/test-vectors/`](../../spec/test-vectors/) に §16 の形式で置いています。バイト列は小文字の16進、`ε` は空文字列です。
-生成処理とベクターの実行処理は `packages/vectors/src/` に置き、`@wake-protocol/vectors` から公開します。`npm run vectors` は `packages/vectors/scripts/generate-vectors.ts` の薄い CLI から生成処理を呼びます。入力はすべて固定値のため、何度実行しても同じ内容になります。
+生成処理とベクターの実行処理は `core/vectors/src/` に置き、`@wake-protocol/vectors` から公開します。`npm run vectors` は `core/vectors/scripts/generate-vectors.ts` の薄い CLI から生成処理を呼びます。入力はすべて固定値のため、何度実行しても同じ内容になります。
 
-`packages/core/test/et-decode.test.ts` はエンコーダーを通さず、壊れた ET の受信バイト列をデコーダーへ直接渡します。LP の切断、余分なフィールド、ラベル、status の不正は `invalid_request`、意味や上限の違反は `invalid_method` / `invalid_path` / `invalid_header` / `too_large` を保つことを確認します。
+`core/protocol/test/et-decode.test.ts` はエンコーダーを通さず、壊れた ET の受信バイト列をデコーダーへ直接渡します。LP の切断、余分なフィールド、ラベル、status の不正は `invalid_request`、意味や上限の違反は `invalid_method` / `invalid_path` / `invalid_header` / `too_large` を保つことを確認します。
 
 ## ロードマップ
 

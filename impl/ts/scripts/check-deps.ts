@@ -9,7 +9,7 @@ const allowedEdges: Record<string, readonly string[]> = {
   "@wake-protocol/bytes": [],
   "@wake-protocol/codec": [],
   "@wake-protocol/crypto": ["@scure/base"],
-  "@wake-protocol/core": ["@wake-protocol/bytes", "@wake-protocol/codec", "@wake-protocol/crypto", "@scure/base"],
+  "@wake-protocol/core": ["@wake-protocol/bytes", "@wake-protocol/codec", "@wake-protocol/crypto", "@scure/base", "@nozomi-hiragi/i-json"],
   "@wake-protocol/vectors": ["@wake-protocol/core", "@wake-protocol/bytes", "@wake-protocol/codec", "@scure/base"],
   "@wake-protocol/server": ["@wake-protocol/core", "@wake-protocol/bytes", "@wake-protocol/codec", "@wake-protocol/crypto", "@scure/base"],
   "@wake-protocol/client": ["@wake-protocol/core", "@wake-protocol/bytes", "@wake-protocol/codec", "@scure/base"],
@@ -21,6 +21,7 @@ const allowedEdges: Record<string, readonly string[]> = {
     "@scure/base",
     "hono",
     "@hono/node-server",
+    "@nozomi-hiragi/i-json",
     "@playwright/test",
     "esbuild",
   ],
@@ -36,13 +37,24 @@ function files(dir: string): string[] {
   });
 }
 
+// Package directories come from the root "workspaces" array; a "dir/*" entry lists its subdirectories.
+function workspaceDirs(root: string): string[] {
+  const workspaces = readPackage(root).workspaces;
+  if (!Array.isArray(workspaces)) throw new Error(`${join(root, "package.json")}: "workspaces" must be an array`);
+  return workspaces.flatMap((pattern: string) => {
+    if (!pattern.endsWith("/*")) return [join(root, pattern)];
+    const base = join(root, pattern.slice(0, -"/*".length));
+    return readdirSync(base, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(base, entry.name, "package.json")))
+      .map((entry) => join(base, entry.name));
+  });
+}
+
 export function checkDependencies(root: string): { offenders: string[]; count: number } {
   const rootDev = Object.keys(readPackage(root).devDependencies ?? {});
   const offenders: string[] = [];
   let count = 0;
-  for (const entry of readdirSync(join(root, "packages"), { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(root, "packages", entry.name);
+  for (const dir of workspaceDirs(root)) {
     const pkg = readPackage(dir);
     const allowed = new Set(allowedEdges[pkg.name] ?? []);
     const dependencies = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies });

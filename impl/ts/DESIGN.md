@@ -9,17 +9,17 @@
 @wake-protocol/codec    依存なし       長さ付き符号化（LP）、ASCII / Latin-1 / UTF-8
 @wake-protocol/crypto   @scure/base    Web Crypto のラッパー（SHA-256、HMAC、HKDF、AES-256-GCM、P-256）
           ↑
-@wake-protocol/core     bytes、codec、crypto、@scure/base    WAKE プロトコル
+@wake-protocol/core     bytes、codec、crypto、@scure/base、@nozomi-hiragi/i-json    WAKE プロトコル
           ↑
 @wake-protocol/vectors  core、bytes、codec、@scure/base      §16 テストベクターの生成と照合（開発用）
 @wake-protocol/server   core、bytes、codec、crypto、@scure/base   WAKE のサーバー（フレームワーク非依存）
 @wake-protocol/client   core、bytes、codec、@scure/base           WAKE のクライアント（ブラウザと Node）
           ↑
-@wake-protocol/demo     server、client、codec、crypto、@scure/base、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
+@wake-protocol/demo     server、client、codec、crypto、@scure/base、@nozomi-hiragi/i-json、hono、@hono/node-server   デモアプリ、結合テスト、e2e（開発用）
 ```
 
-- **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。
-- **core** は汎用パッケージを組み合わせて WAKE を実装します。中は `spec/`（ラベル・ブランド型・エラーなど仕様全体の定義）、`keys/`、`kx/`、`msg/`、`ta/`、`et/` に分けています。
+- **汎用パッケージ**（bytes / codec / crypto）は WAKE を知りません。置き場所は `core/bytes`、`core/codec`、`core/crypto` です。
+- **core**（置き場所は `core/protocol`、パッケージ名は `@wake-protocol/core`）は汎用パッケージを組み合わせて WAKE を実装します。中は `spec/`（ラベル・ブランド型・エラーなど仕様全体の定義）、`keys/`、`kx/`、`msg/`、`ta/`、`et/` に分けています。
 - **vectors** は開発用の道具です。製品のコードから vectors に依存してはいけません。
 - **server** と **client** は互いに依存しません。両者は §7・§8・§12 のワイヤ形式（JSON と `Wire`）だけでつながります。client と server を組み合わせるテストは、両方に依存できる demo に置きます。
 - server は `Request` を受け取り `Response` を返す関数（`handle`）だけを持ち、Web フレームワークに依存しません。WebAuthn の検証（§6.2）は server の `webauthn/` に自前で書いています（理由は §5）。
@@ -73,7 +73,7 @@ WAKE には32バイトの値がたくさんあり、引数を取り違えても�
 - 鍵は役割ごとの型にします。`aesKey` は `C2sKey` / `S2cKey` だけを受け取り、`C2sCryptoKey` / `S2cCryptoKey` を返します。Finished 鍵をメッセージの暗号化に使うこと（§5.6 で禁止）は、型の段階で防げます。
 - ブランドは実行時には消えます。実行時にも守る必要がある条件（AES-256 の鍵長、IV の長さ）は、汎用の crypto で検査します。
 - `fixedLength<B extends string>(name, len)` はブランドの識別子を型引数に取り、`Brand<B>` を返す検査関数を作ります。`Byte4` のようなクラス型を型引数で偽れないようにするためです。
-- 「通ってはいけない呼び出し」は、テストに `// @ts-expect-error` で書きます（`packages/core/test/key-roles.test.ts`）。`npm run typecheck` はテストも対象です。
+- 「通ってはいけない呼び出し」は、テストに `// @ts-expect-error` で書きます（`core/protocol/test/key-roles.test.ts`）。`npm run typecheck` はテストも対象です。
 
 ### 2.9 受け取ったバイト列は厳密に分解する
 WAKE の構造は LP（u32 の長さ ‖ 中身の繰り返し）で組み立てます。区切り文字を使わないので、どんなバイト列を並べても分け方が1通りに決まり、組み立て方も1通りしかありません。そのため、クライアントとサーバーが別々に組み立てた Transcript や Finished の入力が一致し、ET はエスケープなしで任意のバイトを運べます。
@@ -131,7 +131,7 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 | 暗号 | 標準の Web Crypto API を使う |
 | WebAuthn の検証 | 自前（server の `webauthn/`）。`@simplewebauthn/server` は依存が多く、§6.4 の署名カウンターの規則（BE が1なら値が戻っても受理する）とも合わない。必要なのは ES256 の assertion の検証だけで、CBOR の解析も要らない（公開鍵は SPKI で保存する。SPEC-NOTES.md） |
 | ECDSA の DER 署名 | 自前（crypto の `ecdsaDerToRaw` / `ecdsaRawToDer`）。Web Crypto は `r‖s` 形式しか受け付けない。厳密な DER の解析は50行ほどで、非最小の整数・余分なバイト・長形式の長さを拒否することをテストで確かめている |
-| 厳密な JSON（I-JSON） | 自前（codec の `parseIJson`）。`JSON.parse` は重複したキーや孤立サロゲートを受け付けてしまう。§4.8 はこれらの拒否を求める |
+| 厳密な JSON（I-JSON） | `@nozomi-hiragi/i-json` 0.1.2（MIT、依存なし）を採用。受け取る側の検査（§4.8: 重複キー、孤立サロゲート、整数の範囲など）を満たす npm / JSR のライブラリは、これ以外になかった。strict モードに加え、WAKE 側で整数値の検査を行う（`parseJsonObject`）。作者自身のパッケージで、まだ広くは使われていない |
 | HTTP サーバー（demo のみ） | `hono` 4.13.13（MIT）と `@hono/node-server` 2.1.3（MIT）。どちらも実行時の依存がない。server 本体は `Request` / `Response` だけを使うので、フレームワークは差し替えられる |
 | ブラウザ用のバンドル（demo の開発用） | `esbuild` 0.28.2（MIT）。実行時の依存はなく、プラットフォームごとのバイナリを `optionalDependencies`（`@esbuild/<OS>-<CPU>`）で持つ。`postinstall` スクリプト（`install.js`）がバイナリの場所を確かめて最適化するが、`npm ci --ignore-scripts` で実行しなくても、optionalDependencies のバイナリで動く |
 | e2e（demo の開発用） | `@playwright/test` 1.63.0（Apache-2.0）。依存は `playwright` だけ。Chromium の仮想認証器（CDP の `WebAuthn` ドメイン）で、ブラウザのパスキーを使ったログインを確かめる |
@@ -158,6 +158,6 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
    - **はい** → 汎用パッケージに置く。バイト値・整数・型は bytes、符号化と文字列は codec、Web Crypto は crypto。どれにも収まらず、ほかの汎用パッケージに依存したくなったら、新しいパッケージにするか core に置くかを検討する（汎用パッケージどうしの依存は作らない）。
    - **いいえ** → core に置く。仕様全体で使う定義は `spec/`、それ以外は対応するモジュール（`keys/`、`kx/`、`msg/`、`ta/`、`et/`）。
    - WAKE のサーバー・クライアントとしての処理（HTTP の受け答え、状態の保存、WebAuthn の検証、再送）→ server または client。どちらにも必要な WAKE の定義は core に置く。
-2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/src/testing.ts`。サーバー側のテスト用の道具（`SoftAuthenticator`）→ `server/src/testing.ts`
-3. テストベクターの生成と実行 → `vectors/src/`。コマンドラインの入口は `vectors/scripts/` に薄く置く。
+2. 乱数を固定するものや、制約のない符号化など、テストでしか使わないもの → `core/protocol/src/testing.ts`。サーバー側のテスト用の道具（`SoftAuthenticator`）→ `server/src/testing.ts`
+3. テストベクターの生成と実行 → `core/vectors/src/`。コマンドラインの入口は `core/vectors/scripts/` に薄く置く。
 4. client と server を組み合わせるテスト、デモ画面、e2e → demo
