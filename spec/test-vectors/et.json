@@ -7,13 +7,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api/items",
-        "query": "",
+        "url": "/api/items",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d726571000000034745540000000a2f6170692f6974656d73000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d726571000000034745540000000a2f6170692f6974656d730000000000000000"
       }
     },
     {
@@ -21,8 +20,7 @@
       "input": {
         "kind": "request",
         "method": "POST",
-        "path": "/api/transfer",
-        "query": "a=1&b=%20x",
+        "url": "/api/transfer?a=1&b=%20x",
         "headers": [
           [
             "content-type",
@@ -36,7 +34,7 @@
         "body": "7b22616d6f756e74223a31303030307d"
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000004504f53540000000d2f6170692f7472616e736665720000000a613d3126623d253230780000003e0000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e0000000f6964656d706f74656e63792d6b6579000000036b2d31000000107b22616d6f756e74223a31303030307d"
+        "encoded": "0000000d57414b452f312065742d72657100000004504f5354000000182f6170692f7472616e736665723f613d3126623d253230780000003e0000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e0000000f6964656d706f74656e63792d6b6579000000036b2d31000000107b22616d6f756e74223a31303030307d"
       }
     },
     {
@@ -44,13 +42,12 @@
       "input": {
         "kind": "request",
         "method": "PATCH",
-        "path": "/",
-        "query": "",
+        "url": "/",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d726571000000055041544348000000012f000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d726571000000055041544348000000012f0000000000000000"
       }
     },
     {
@@ -96,8 +93,7 @@
       "input": {
         "kind": "request",
         "method": "TRACE",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [],
         "body": ""
       },
@@ -108,25 +104,23 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "a=b c",
+        "url": "/api?a=b c",
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expectedError": "invalid_url"
     },
     {
       "name": "request-path-double-slash",
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a//b",
-        "query": "",
+        "url": "/a//b",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000052f612f2f62000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000052f612f2f620000000000000000"
       }
     },
     {
@@ -134,13 +128,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a/../b",
-        "query": "",
+        "url": "/a/../b",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f612f2e2e2f62000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f612f2e2e2f620000000000000000"
       }
     },
     {
@@ -148,13 +141,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a/%2f",
-        "query": "",
+        "url": "/a/%2f",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f253266000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f2532660000000000000000"
       }
     },
     {
@@ -162,13 +154,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a/%2F",
-        "query": "",
+        "url": "/a/%2F",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f253246000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000062f612f2532460000000000000000"
       }
     },
     {
@@ -176,13 +167,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/%41",
-        "query": "",
+        "url": "/%41",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f253431000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f2534310000000000000000"
       }
     },
     {
@@ -190,39 +180,34 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a/%zz",
-        "query": "",
+        "url": "/a/%zz",
         "headers": [],
         "body": ""
       },
-      "expectedError": "invalid_path"
+      "expectedError": "invalid_url"
     },
     {
       "name": "request-query-square-brackets",
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/a",
-        "query": "q=[x]",
+        "url": "/a?q=[x]",
         "headers": [],
         "body": ""
       },
-      "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000022f6100000005713d5b785d0000000000000000"
-      }
+      "expectedError": "invalid_url"
     },
     {
-      "name": "request-path-under-wake-is-dispatchers-job",
+      "name": "request-path-under-wake-is-receivers-job",
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/wake/x",
-        "query": "",
+        "url": "/wake/x",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f77616b652f78000000000000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000072f77616b652f780000000000000000"
       }
     },
     {
@@ -230,13 +215,12 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "q=%e3%81%82",
+        "url": "/api?q=%e3%81%82",
         "headers": [],
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f6170690000000b713d2565332538312538320000000000000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000102f6170693f713d2565332538312538320000000000000000"
       }
     },
     {
@@ -244,8 +228,7 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [
           [
             "accept",
@@ -259,7 +242,7 @@
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f61706900000000000000350000000661636365707400000009746578742f68746d6c00000006616363657074000000106170706c69636174696f6e2f6a736f6e00000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f617069000000350000000661636365707400000009746578742f68746d6c00000006616363657074000000106170706c69636174696f6e2f6a736f6e00000000"
       }
     },
     {
@@ -267,8 +250,7 @@
       "input": {
         "kind": "request",
         "method": "POST",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [
           [
             "content-type",
@@ -281,7 +263,9 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000004504f5354000000042f617069000000420000000c636f6e74656e742d747970650000000a746578742f706c61696e0000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e00000000"
+      }
     },
     {
       "name": "response-duplicate-content-type",
@@ -300,7 +284,9 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200c8000000420000000c636f6e74656e742d747970650000000a746578742f706c61696e0000000c636f6e74656e742d74797065000000106170706c69636174696f6e2f6a736f6e00000000"
+      }
     },
     {
       "name": "response-location-protocol-relative",
@@ -315,7 +301,9 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657300000002012e00000020000000086c6f636174696f6e000000102f2f6576696c2e6578616d706c652f7800000000"
+      }
     },
     {
       "name": "response-location-absolute-url",
@@ -330,7 +318,9 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657300000002012e00000025000000086c6f636174696f6e0000001568747470733a2f2f6576696c2e6578616d706c652f00000000"
+      }
     },
     {
       "name": "response-location-backslash",
@@ -345,7 +335,9 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657300000002012e0000001e000000086c6f636174696f6e0000000e2f5c6576696c2e6578616d706c6500000000"
+      }
     },
     {
       "name": "response-location-bare-relative",
@@ -360,15 +352,16 @@
         ],
         "body": ""
       },
-      "expectedError": "invalid_header"
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657300000002012e00000013000000086c6f636174696f6e00000003782f7900000000"
+      }
     },
     {
       "name": "request-header-cookie",
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [
           [
             "cookie",
@@ -378,7 +371,7 @@
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f617069000000000000001100000006636f6f6b696500000003613d6200000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f6170690000001100000006636f6f6b696500000003613d6200000000"
       }
     },
     {
@@ -386,8 +379,7 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [
           [
             "X-Trace-Id",
@@ -397,7 +389,7 @@
         "body": ""
       },
       "expected": {
-        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f61706900000000000000150000000a582d54726163652d49640000000361626300000000"
+        "encoded": "0000000d57414b452f312065742d72657100000003474554000000042f617069000000150000000a582d54726163652d49640000000361626300000000"
       }
     },
     {
@@ -405,8 +397,7 @@
       "input": {
         "kind": "request",
         "method": "GET",
-        "path": "/api",
-        "query": "",
+        "url": "/api",
         "headers": [
           [
             "content-type",
@@ -471,6 +462,201 @@
       "expected": {
         "encoded": "0000000d57414b452f312065742d7265730000000200c80000001100000008582d4f706171756500000001e900000000"
       }
+    },
+    {
+      "name": "request-absolute-uri",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "wake://app/members?id=1",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d726571000000034745540000001777616b653a2f2f6170702f6d656d626572733f69643d310000000000000000"
+      }
+    },
+    {
+      "name": "request-https-uri",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "https://api.example.com/v1/items?id=1",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d726571000000034745540000002568747470733a2f2f6170692e6578616d706c652e636f6d2f76312f6974656d733f69643d310000000000000000"
+      }
+    },
+    {
+      "name": "request-relative-reference",
+      "input": {
+        "kind": "request",
+        "method": "x-Custom",
+        "url": "a/b",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000008782d437573746f6d00000003612f620000000000000000"
+      }
+    },
+    {
+      "name": "request-empty-url",
+      "input": {
+        "kind": "request",
+        "method": "get",
+        "url": "",
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d72657100000003676574000000000000000000000000"
+      }
+    },
+    {
+      "name": "request-url-fragment",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "/x#y",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_url"
+    },
+    {
+      "name": "request-url-quote",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "/a\"b",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_url"
+    },
+    {
+      "name": "request-url-too-long",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_url"
+    },
+    {
+      "name": "request-method-connect",
+      "input": {
+        "kind": "request",
+        "method": "connect",
+        "url": "/api",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_method"
+    },
+    {
+      "name": "request-method-track",
+      "input": {
+        "kind": "request",
+        "method": "TrAcK",
+        "url": "/api",
+        "headers": [],
+        "body": ""
+      },
+      "expectedError": "invalid_method"
+    },
+    {
+      "name": "request-null-body-get",
+      "input": {
+        "kind": "request",
+        "method": "GET",
+        "url": "/api",
+        "headers": [],
+        "body": "01"
+      },
+      "expectedError": "invalid_request"
+    },
+    {
+      "name": "request-null-body-head",
+      "input": {
+        "kind": "request",
+        "method": "HEAD",
+        "url": "/api",
+        "headers": [],
+        "body": "01"
+      },
+      "expectedError": "invalid_request"
+    },
+    {
+      "name": "response-empty-204",
+      "input": {
+        "kind": "response",
+        "status": 204,
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200cc0000000000000000"
+      }
+    },
+    {
+      "name": "response-null-body-204",
+      "input": {
+        "kind": "response",
+        "status": 204,
+        "headers": [],
+        "body": "01"
+      },
+      "expectedError": "invalid_request"
+    },
+    {
+      "name": "response-empty-205",
+      "input": {
+        "kind": "response",
+        "status": 205,
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000200cd0000000000000000"
+      }
+    },
+    {
+      "name": "response-null-body-205",
+      "input": {
+        "kind": "response",
+        "status": 205,
+        "headers": [],
+        "body": "01"
+      },
+      "expectedError": "invalid_request"
+    },
+    {
+      "name": "response-empty-304",
+      "input": {
+        "kind": "response",
+        "status": 304,
+        "headers": [],
+        "body": ""
+      },
+      "expected": {
+        "encoded": "0000000d57414b452f312065742d7265730000000201300000000000000000"
+      }
+    },
+    {
+      "name": "response-null-body-304",
+      "input": {
+        "kind": "response",
+        "status": 304,
+        "headers": [],
+        "body": "01"
+      },
+      "expectedError": "invalid_request"
     }
   ]
 }

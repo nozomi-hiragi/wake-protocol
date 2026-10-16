@@ -7,8 +7,8 @@ import {
   DIR_S2C,
   ET_BODY_MAX,
   ET_HEADERS_MAX,
-  ET_PATH_MAX,
-  ET_QUERY_MAX,
+  ET_METHOD_MAX,
+  ET_URL_MAX,
   ET_REQUEST_MAX_ENCODED,
   ET_RESPONSE_MAX_ENCODED,
   Bytes,
@@ -44,16 +44,15 @@ async function expectCode(p: Promise<unknown>, code: string): Promise<void> {
 
 describe("plaintext length limit (§8.7)", () => {
   it("default limit covers the worst-case encoded ET request and response", () => {
-    assert.equal(ET_REQUEST_MAX_ENCODED, 1_128_491);
+    assert.equal(ET_REQUEST_MAX_ENCODED, 1_128_513);
     assert.equal(ET_RESPONSE_MAX_ENCODED, 1_122_335);
-    assert.ok(DEFAULT_MAX_PLAINTEXT >= Math.max(ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED));
+    assert.equal(DEFAULT_MAX_PLAINTEXT, Math.max(ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED));
   });
 
   it("the worst-case ET request encodes and seals with default options", async () => {
     const request = {
-      method: "DELETE",
-      path: "/" + "a".repeat(ET_PATH_MAX - 1),
-      query: "q".repeat(ET_QUERY_MAX),
+      method: "X".repeat(ET_METHOD_MAX),
+      url: "/" + "a".repeat(ET_URL_MAX - 1),
       headers: Array.from({ length: ET_HEADERS_MAX }, () => ["x", ""] as const),
       body: new Bytes(new Uint8Array(ET_BODY_MAX)),
     } as const;
@@ -65,8 +64,7 @@ describe("plaintext length limit (§8.7)", () => {
     assert.ok(opened.plaintext.equals(encoded));
     const decoded = decodeEtRequest(opened.plaintext);
     assert.equal(decoded.method, request.method);
-    assert.equal(decoded.path, request.path);
-    assert.equal(decoded.query, request.query);
+    assert.equal(decoded.url, request.url);
     assert.deepEqual(decoded.headers, request.headers);
     assert.ok(decoded.body.equals(request.body));
   });

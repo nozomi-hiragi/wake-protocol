@@ -1,5 +1,5 @@
-// Spec §11.5: in-process ET route registration, request and auth objects.
-import type { EtHeader, EtMethod } from "@wake-protocol/core";
+// Spec §11.5: in-process ET handler, request and auth objects.
+import type { EtHeader } from "@wake-protocol/core";
 
 /** §11.5: identity of the authenticated session, passed as an in-process object and never as headers. */
 export interface EtAuth {
@@ -16,24 +16,17 @@ export interface EtAuth {
   requestId: string;
 }
 
-export interface EtRouteRequest {
-  method: EtMethod;
-  path: string;
-  /** Raw query string without "?", passed unnormalized. */
-  query: string;
+export interface EtHandlerRequest {
+  method: string;
+  url: string;
   headers: readonly EtHeader[];
   body: Uint8Array;
 }
 
-export interface EtRouteResponse {
+export interface EtHandlerResponse {
   status: number;
   headers?: readonly EtHeader[];
   body?: Uint8Array;
 }
 
-/** A route matches only an exact method and path; the query is passed to the handler, never matched. */
-export interface EtRoute {
-  method: EtMethod;
-  path: string;
-  handler(req: EtRouteRequest, auth: EtAuth): Promise<EtRouteResponse> | EtRouteResponse;
-}
+export type EtHandler = (req: EtHandlerRequest, auth: EtAuth) => Promise<EtHandlerResponse> | EtHandlerResponse;

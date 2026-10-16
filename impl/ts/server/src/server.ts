@@ -32,6 +32,10 @@ export function createWakeServer(options: WakeServerOptions): WakeServer {
       if (path !== "/auth/start" && path !== "/auth/complete" && path !== "/wake/up" && path !== "/wake/transport") {
         return null;
       }
+      // Without a handler ET is disabled and /wake/transport is an unknown path.
+      if (path === "/wake/transport" && config.etHandler === undefined) {
+        return null;
+      }
       const encrypted = path === "/wake/up" || path === "/wake/transport";
       if (req.method !== "POST") {
         const response = jsonResponse(

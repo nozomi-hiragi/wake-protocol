@@ -7,7 +7,7 @@ import type { Context } from "hono";
 import { utf8ToBytes } from "@wake-protocol/codec";
 import { importP256SpkiPublicKey, randomBytes, sha256 } from "@wake-protocol/crypto";
 import { createWakeServer, MemoryCredentialStore, MemoryWakeStore } from "@wake-protocol/server";
-import type { EtAuth, EtRoute, EtRouteResponse, OperationView, WakeServer } from "@wake-protocol/server";
+import type { EtAuth, EtHandler, EtHandlerResponse, OperationView, WakeServer } from "@wake-protocol/server";
 
 export interface DemoAppOptions {
   rpId: string;
@@ -33,6 +33,8 @@ const REGISTRATION_TTL_MS = 300_000;
 const MAX_BODY = 65_536;
 const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const FILES = new URL("../", import.meta.url);
+// Base for resolving the relative ET URLs the demo client sends.
+const DEMO_BASE = "wake://demo";
 const OPERATION_LIFETIME_MS = 600_000;
 const MAX_ET_BODY = 16_384;
 // Demo only: caps the PENDING operations one user can pile up through the demo route.
@@ -199,11 +201,11 @@ async function verifyRegistration(
   return { rawId, publicKey, signCount, backupEligible: (flags & 0x08) !== 0, transports };
 }
 
-function etJson(status: number, value: unknown): EtRouteResponse {
+function etJson(status: number, value: unknown): EtHandlerResponse {
   return { status, headers: [["content-type", "application/json"]], body: utf8ToBytes(JSON.stringify(value)) };
 }
 
-function etError(status: number, code: string): EtRouteResponse {
+function etError(status: number, code: string): EtHandlerResponse {
   return etJson(status, { error: { code } });
 }
 
@@ -234,11 +236,11 @@ function decisionRecord(view: OperationView): Record<string, unknown> | undefine
   return { kind: d.kind, decidedAt: d.decidedAt, decidedBy: d.decidedBy };
 }
 
-// Demo ET routes (spec §11.5). They are reachable only inside WAKE-ET; auth comes from the in-process object.
-function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: () => number): EtRoute[] {
+// Demo application routes are reachable only inside WAKE-ET; auth comes from the in-process object.
+function demoHandler(getServer: () => WakeServer, store: MemoryWakeStore, now: () => number): EtHandler {
   // Per-user tail of the create chain (see POST /api/operations).
   const creatingByUser = new Map<string, Promise<void>>();
-  return [
+  const routes: { method: string; path: string; handler: EtHandler }[] = [
     {
       method: "GET",
       path: "/api/me",
@@ -275,7 +277,7 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
         // The cap check and the create must be atomic per user, or parallel requests could all pass the check.
         // Creates of one user are chained on a promise so each sees the previous one's result.
         const previous = creatingByUser.get(auth.userId) ?? Promise.resolve();
-        const run = previous.then(async (): Promise<EtRouteResponse> => {
+        const run = previous.then(async (): Promise<EtHandlerResponse> => {
           const pending = await store.listOperations({
             approverUserId: auth.userId,
             status: "PENDING",
@@ -316,7 +318,7 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
       method: "GET",
       path: "/api/operation",
       async handler(req, auth) {
-        const id = new URLSearchParams(req.query).get("id");
+        const id = new URL(req.url, DEMO_BASE).searchParams.get("id");
         if (id === null || !OPERATION_ID.test(id)) {
           return etError(400, "invalid_request");
         }
@@ -334,6 +336,13 @@ function demoRoutes(getServer: () => WakeServer, store: MemoryWakeStore, now: ()
       },
     },
   ];
+  return (req, auth) => {
+    // The demo serves only its own URLs: relative references and wake://demo/... Other hosts are unknown here.
+    const url = URL.parse(req.url, DEMO_BASE);
+    const own = url !== null && url.protocol === "wake:" && url.host === "demo";
+    const route = own ? routes.find(r => r.method === req.method && r.path === url.pathname) : undefined;
+    return route ? route.handler(req, auth) : etError(404, "not_found");
+  };
 }
 
 async function file(path: string, type: string): Promise<Response> {
@@ -356,7 +365,7 @@ export function createDemoApp(options: DemoAppOptions): DemoApp {
     credentials,
     store,
     now,
-    routes: demoRoutes(() => server, store, now),
+    etHandler: demoHandler(() => server, store, now),
   });
   const pending = new Map<string, PendingRegistration>();
   const app = new Hono();

@@ -32,4 +32,4 @@ export type {
   ApprovalKrOutcome,
 } from "./store/types.ts";
 export type { CreateOperationInput, CreatedOperation, OperationView } from "./ta/operations.ts";
-export type { EtAuth, EtRoute, EtRouteRequest, EtRouteResponse } from "./et/types.ts";
+export type { EtAuth, EtHandler, EtHandlerRequest, EtHandlerResponse } from "./et/types.ts";

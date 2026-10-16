@@ -10,8 +10,7 @@ import {
   Bytes,
   ET_BODY_MAX,
   ET_HEADERS_MAX,
-  ET_PATH_MAX,
-  ET_QUERY_MAX,
+  ET_URL_MAX,
   WakeError,
   decodeEtRequest,
   decodeEtResponse,
@@ -38,9 +37,9 @@ interface DecoderCase {
 const decoders: DecoderCase[] = [
   {
     kind: "request",
-    fields: () => [ascii("WAKE/1 et-req"), ascii("GET"), ascii("/"), empty, headers, body],
-    headerIndex: 4,
-    bodyIndex: 5,
+    fields: () => [ascii("WAKE/1 et-req"), ascii("POST"), ascii("/"), headers, body],
+    headerIndex: 3,
+    bodyIndex: 4,
     decode: decodeEtRequest,
   },
   {
@@ -87,7 +86,6 @@ for (const { kind, fields, headerIndex, bodyIndex, decode } of decoders) {
       ["invalid header name token", lp(ascii("bad name"), empty)],
       ["control byte in header value", lp(ascii("x"), Uint8Array.of(0))],
       ["CRLF in header value", lp(ascii("x"), ascii("a\r\nb"))],
-      ["duplicate non-combinable field", lp(ascii("Content-Type"), ascii("a"), ascii("content-type"), ascii("b"))],
       ["headers over the limit", lp(ascii("x"), ascii("a".repeat(ET_HEADERS_MAX)))],
     ];
     for (const [name, value] of invalidHeaders) {
@@ -115,19 +113,14 @@ for (const { kind, fields, headerIndex, bodyIndex, decode } of decoders) {
 
 describe("raw ET request field semantics", () => {
   const cases: [string, number, Uint8Array, string][] = [
-    ["unsupported method", 1, ascii("HEAD"), "invalid_method"],
+    ["forbidden method", 1, ascii("TRACE"), "invalid_method"],
     ["non-ASCII method", 1, Uint8Array.of(0x80), "invalid_method"],
     ["empty method", 1, empty, "invalid_method"],
-    ["non-ASCII path", 2, Uint8Array.of(0x2f, 0x80), "invalid_path"],
-    ["control byte in path", 2, Uint8Array.of(0x2f, 0), "invalid_path"],
-    ["relative path", 2, ascii("relative"), "invalid_path"],
-    ["malformed path escape", 2, ascii("/%zz"), "invalid_path"],
-    ["path over the limit", 2, ascii("/".repeat(ET_PATH_MAX + 1)), "invalid_path"],
-    ["non-ASCII query", 3, Uint8Array.of(0x80), "invalid_path"],
-    ["control byte in query", 3, Uint8Array.of(0), "invalid_path"],
-    ["fragment in query", 3, ascii("q=#fragment"), "invalid_path"],
-    ["malformed query escape", 3, ascii("q=%"), "invalid_path"],
-    ["query over the limit", 3, ascii("q".repeat(ET_QUERY_MAX + 1)), "invalid_path"],
+    ["non-ASCII URL", 2, Uint8Array.of(0x2f, 0x80), "invalid_url"],
+    ["control byte in URL", 2, Uint8Array.of(0x2f, 0), "invalid_url"],
+    ["malformed escape", 2, ascii("/%zz"), "invalid_url"],
+    ["URL over the limit", 2, ascii("/".repeat(ET_URL_MAX + 1)), "invalid_url"],
+    ["fragment", 2, ascii("/?q=#fragment"), "invalid_url"],
   ];
   for (const [name, index, value, code] of cases) {
     it(`${name} preserves ${code}`, () => {
@@ -152,8 +145,8 @@ describe("raw ET response status and location", () => {
       assert.equal(decodeEtResponse(replace(decoders[1]!.fields(), 1, new Byte2(status).toUint8Array())).status, status);
     });
   }
-  it("invalid response location preserves invalid_header", () => {
+  it("cross-origin response location passes through", () => {
     const value = lp(ascii("location"), ascii("//other.example/path"));
-    assert.throws(() => decodeEtResponse(replace(decoders[1]!.fields(), 2, value)), hasCode("invalid_header"));
+    assert.deepEqual(decodeEtResponse(replace(decoders[1]!.fields(), 2, value)).headers, [["location", "//other.example/path"]]);
   });
 });

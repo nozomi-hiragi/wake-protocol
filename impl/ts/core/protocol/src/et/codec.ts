@@ -6,7 +6,7 @@ import { LABELS } from "../spec/labels.ts";
 import { decodeFields, expectLabel, labeled } from "../spec/domain.ts";
 import { checkMaxLength } from "../spec/limits.ts";
 import { type EtHeader, type EtOptions, type EtRequest, type EtResponse, ET_BODY_MAX } from "./types.ts";
-import { checkMethod, checkPath, checkQuery, checkRequestHeaders, checkResponseHeaders, checkStatus } from "./validate.ts";
+import { checkMethod, checkUrl, checkRequestHeaders, checkResponseHeaders, checkStatus } from "./validate.ts";
 
 function encodeHeaders(headers: readonly EtHeader[]): Bytes {
   const flat: Uint8Array[] = [];
@@ -31,40 +31,39 @@ function checkBody(body: Bytes, opts: EtOptions): void {
 
 export function encodeEtRequest(r: EtRequest, opts: EtOptions = {}): Bytes {
   checkMethod(r.method);
-  checkPath(r.path);
-  checkQuery(r.query);
+  checkUrl(r.url);
   checkRequestHeaders(r.headers);
   checkBody(r.body, opts);
+  checkRequestBody(r.method, r.body);
   return labeled(
     LABELS.etReq,
     asciiToBytes(r.method),
-    asciiToBytes(r.path),
-    asciiToBytes(r.query),
+    asciiToBytes(r.url),
     encodeHeaders(r.headers),
     r.body,
   );
 }
 
 export function decodeEtRequest(bytes: Bytes | Uint8Array, opts: EtOptions = {}): EtRequest {
-  const f = remap("invalid_request", () => decodeFields(bytes, [asciiToBytes(LABELS.etReq).length, null, null, null, null, null]));
+  const f = remap("invalid_request", () => decodeFields(bytes, [asciiToBytes(LABELS.etReq).length, null, null, null, null]));
   expectLabel(f[0]!, LABELS.etReq, "invalid_request");
   const method = bytesToLatin1(f[1]!.toUint8Array());
   checkMethod(method);
-  const path = bytesToLatin1(f[2]!.toUint8Array());
-  checkPath(path);
-  const query = bytesToLatin1(f[3]!.toUint8Array());
-  checkQuery(query);
-  const headers = decodeHeaders(f[4]!);
+  const url = bytesToLatin1(f[2]!.toUint8Array());
+  checkUrl(url);
+  const headers = decodeHeaders(f[3]!);
   checkRequestHeaders(headers);
-  const body = f[5]!;
+  const body = f[4]!;
   checkBody(body, opts);
-  return { method, path, query, headers, body };
+  checkRequestBody(method, body);
+  return { method, url, headers, body };
 }
 
 export function encodeEtResponse(r: EtResponse, opts: EtOptions = {}): Bytes {
   checkStatus(r.status);
   checkResponseHeaders(r.headers);
   checkBody(r.body, opts);
+  checkResponseBody(r.status, r.body);
   return labeled(LABELS.etRes, new Byte2(r.status), encodeHeaders(r.headers), r.body);
 }
 
@@ -77,5 +76,14 @@ export function decodeEtResponse(bytes: Bytes | Uint8Array, opts: EtOptions = {}
   checkResponseHeaders(headers);
   const body = f[3]!;
   checkBody(body, opts);
+  checkResponseBody(status, body);
   return { status, headers, body };
+}
+
+function checkRequestBody(method: string, body: Bytes): void {
+  if (/^(GET|HEAD)$/i.test(method) && body.length !== 0) fail("invalid_request", "method cannot have a body");
+}
+
+function checkResponseBody(status: number, body: Bytes): void {
+  if ([204, 205, 304].includes(status) && body.length !== 0) fail("invalid_request", "status cannot have a body");
 }

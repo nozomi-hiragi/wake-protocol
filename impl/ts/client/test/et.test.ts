@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bytes } from "@wake-protocol/bytes";
-import { bytesToUtf8, utf8ToBytes } from "@wake-protocol/codec";
+import { asciiToBytes, bytesToUtf8, utf8ToBytes, encodeU32LengthPrefixed } from "@wake-protocol/codec";
 import { encodeEtRequest, encodeEtResponse, ET_BODY_MIN, ET_BODY_MAX, ET_REQUEST_MAX_ENCODED, ET_RESPONSE_MAX_ENCODED, DEFAULT_MAX_PLAINTEXT } from "@wake-protocol/core";
 import { WakeClient } from "../src/index.ts";
 import { fixture, hasCode, jsonResponse } from "./fixture.ts";
@@ -12,23 +12,21 @@ const login = { mode: "discoverable" } as const;
 const etResponse = (status: number, headers: [string, string][], body: Uint8Array) =>
   encodeEtResponse({ status, headers, body: new Bytes(body) }).toUint8Array();
 
-test("wakeFetch round-trips method, path, query, repeated headers and a binary body", async () => {
+test("wakeFetch round-trips method, URL, repeated headers and a binary body", async () => {
   const f = await fixture();
   await f.client.login(login);
   f.etHandler = () => etResponse(201, [["X-Multi", "a"], ["x-multi", "b"], ["Content-Type", "application/octet-stream"]],
     new Uint8Array([0, 255, 1]));
   const body = new Uint8Array([0, 1, 2, 254, 255]);
-  const response = await f.client.wakeFetch("/api/items", {
+  const response = await f.client.wakeFetch("/api/items?a=1&b=%20", {
     method: "PUT",
-    query: "a=1&b=%20",
     headers: [["X-Test", "one"], ["x-test", "two"]],
     body,
   });
   assert.equal(f.paths.at(-1), "/wake/transport");
   const seen = f.etRequests[0]!;
   assert.equal(seen.method, "PUT");
-  assert.equal(seen.path, "/api/items");
-  assert.equal(seen.query, "a=1&b=%20");
+  assert.equal(seen.url, "/api/items?a=1&b=%20");
   assert.deepEqual(seen.headers, [["X-Test", "one"], ["x-test", "two"]]);
   assert.deepEqual([...seen.body.toUint8Array()], [...body]);
   assert.equal(f.requests.at(-1)!.context, "wake-et");
@@ -37,29 +35,29 @@ test("wakeFetch round-trips method, path, query, repeated headers and a binary b
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0, 255, 1]);
 });
 
-test("wakeFetch defaults to GET, splits path?query once and encodes string bodies and record headers as UTF-8", async () => {
+test("wakeFetch defaults to GET, preserves the URL and encodes string bodies and record headers as UTF-8", async () => {
   const f = await fixture();
   await f.client.login(login);
   await f.client.wakeFetch("/a?x=1?y", { headers: { "X-A": "b" } });
   assert.equal(f.etRequests[0]!.method, "GET");
-  assert.equal(f.etRequests[0]!.path, "/a");
-  assert.equal(f.etRequests[0]!.query, "x=1?y");
+  assert.equal(f.etRequests[0]!.url, "/a?x=1?y");
   assert.deepEqual(f.etRequests[0]!.headers, [["X-A", "b"]]);
   await f.client.wakeFetch("/b", { method: "POST", body: "あ" });
   assert.equal(bytesToUtf8(f.etRequests[1]!.body.toUint8Array()), "あ");
-  await assert.rejects(f.client.wakeFetch("/c?x", { query: "y" }), hasCode("invalid_path"));
 });
 
 test("wakeFetch validation errors are thrown before anything is sent", async () => {
   const f = await fixture();
   await f.client.login(login);
   const before = f.wires.length;
-  await assert.rejects(f.client.wakeFetch("no-slash"), hasCode("invalid_path"));
-  await assert.rejects(f.client.wakeFetch("/a%zz"), hasCode("invalid_path"));
+  await assert.rejects(f.client.wakeFetch("1a:b"), hasCode("invalid_url"));
+  await assert.rejects(f.client.wakeFetch("/a%zz"), hasCode("invalid_url"));
   await assert.rejects(f.client.wakeFetch("/a", { method: "TRACE" as never }), hasCode("invalid_method"));
   await assert.rejects(f.client.wakeFetch("/a", { headers: [["Bad Name", "v"]] }), hasCode("invalid_header"));
-  await assert.rejects(f.client.wakeFetch("/a", { headers: [["Content-Type", "a"], ["content-type", "b"]] }), hasCode("invalid_header"));
   await assert.rejects(f.client.wakeFetch("/a", { body: new Uint8Array(ET_BODY_MAX + 1) }), hasCode("too_large"));
+  for (const method of ["GET", "get", "HEAD", "hEaD"]) {
+    await assert.rejects(f.client.wakeFetch("/a", { method, body: "x" }), hasCode("invalid_request"));
+  }
   assert.equal(f.wires.length, before);
   // Boundary: exactly the limit is sent.
   await f.client.wakeFetch("/a", { method: "POST", body: new Uint8Array(ET_BODY_MAX) });
@@ -79,7 +77,7 @@ test("wakeFetch uses a raised ET body limit for both requests and responses", as
     headers: [],
     body: request.body,
   }, { bodyLimit }).toUint8Array();
-  assert.ok(encodeEtRequest({ method: "POST", path: "/echo", query: "", headers: [], body: new Bytes(body) },
+  assert.ok(encodeEtRequest({ method: "POST", url: "/echo", headers: [], body: new Bytes(body) },
     { bodyLimit }).length > DEFAULT_MAX_PLAINTEXT);
   assert.ok(encodeEtResponse({ status: 200, headers: [], body: new Bytes(body) },
     { bodyLimit }).length > DEFAULT_MAX_PLAINTEXT);
@@ -124,13 +122,13 @@ for (const limit of [ET_BODY_MIN, ET_BODY_MAX]) {
   });
 }
 
-test("wakeFetch surfaces a 404 route_not_found EtResponse at the minimum body limit", async () => {
+test("wakeFetch surfaces a 404 not_found EtResponse at the minimum body limit", async () => {
   const f = await fixture({ etBodyLimit: ET_BODY_MIN });
   await f.client.login(login);
-  f.etHandler = () => etResponse(404, [["Content-Type", "application/json"]], utf8ToBytes('{"error":{"code":"route_not_found"}}'));
+  f.etHandler = () => etResponse(404, [["Content-Type", "application/json"]], utf8ToBytes('{"error":{"code":"not_found"}}'));
   const response = await f.client.wakeFetch("/missing");
   assert.equal(response.status, 404);
-  assert.deepEqual(await response.json(), { error: { code: "route_not_found" } });
+  assert.deepEqual(await response.json(), { error: { code: "not_found" } });
 });
 
 test("wakeFetch retries a stale_request once on /wake/transport and then fails", async () => {
@@ -197,13 +195,46 @@ test("accept exact worst-case ET plaintext limit and reject raised body limit wi
     maxPlaintext: Number.MAX_SAFE_INTEGER }), hasCode("invalid_option"));
 });
 
-test("wakeFetch exposes a null body for the 204/205/304 null-body statuses even when the ET body is non-empty", async () => {
+test("wakeFetch exposes a null body for empty 204/205/304 responses", async () => {
   const f = await fixture();
   await f.client.login(login);
   for (const status of [204, 205, 304]) {
-    f.etHandler = () => etResponse(status, [], new Uint8Array([1, 2, 3]));
+    f.etHandler = () => etResponse(status, [], new Uint8Array());
     const response = await f.client.wakeFetch("/x");
     assert.equal(response.status, status);
     assert.equal(response.body, null);
   }
+});
+
+for (const url of ["wake://app/members?id=1", "https://h/a/../b?x=%2f", "a/b", "", "//host/x"]) {
+  test(`wakeFetch preserves URI-reference ${url}`, async () => {
+    const f = await fixture();
+    await f.client.login(login);
+    await f.client.wakeFetch(url, { method: "x-Custom", headers: [["Host", "a"], ["host", "b"]] });
+    assert.equal(f.etRequests[0]!.url, url);
+    assert.equal(f.etRequests[0]!.method, "x-Custom");
+    assert.deepEqual(f.etRequests[0]!.headers, [["Host", "a"], ["host", "b"]]);
+  });
+}
+
+for (const status of [204, 205, 304]) {
+  test(`wakeFetch rejects a received body on ${status}`, async () => {
+    const f = await fixture();
+    await f.client.login(login);
+    f.etHandler = () => encodeU32LengthPrefixed(
+      asciiToBytes("WAKE/1 et-res"), Uint8Array.of(status >> 8, status & 255), new Uint8Array(), Uint8Array.of(1),
+    );
+    await assert.rejects(f.client.wakeFetch("/x"), hasCode("invalid_request"));
+  });
+}
+
+test("wakeFetch exposes duplicate fields and a cross-origin location", async () => {
+  const f = await fixture();
+  await f.client.login(login);
+  f.etHandler = () => etResponse(302, [["Location", "https://other.example/"], ["location", "//other.example/x"],
+    ["Content-Type", "a"], ["content-type", "b"]], new Uint8Array());
+  const res = await f.client.wakeFetch("/x");
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), "https://other.example/, //other.example/x");
+  assert.equal(res.headers.get("content-type"), "a, b");
 });

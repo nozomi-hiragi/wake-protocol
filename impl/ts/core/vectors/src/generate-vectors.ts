@@ -587,15 +587,14 @@ async function buildSuites(): Promise<SuiteFile[]> {
     [
       {
         name: "request-get-minimal",
-        input: { kind: "request", method: "GET", path: "/api/items", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/api/items", headers: [], body: "" },
       },
       {
         name: "request-post-with-headers-and-query",
         input: {
           kind: "request",
           method: "POST",
-          path: "/api/transfer",
-          query: "a=1&b=%20x",
+          url: "/api/transfer?a=1&b=%20x",
           headers: [
             ["content-type", "application/json"],
             ["idempotency-key", "k-1"],
@@ -605,7 +604,7 @@ async function buildSuites(): Promise<SuiteFile[]> {
       },
       {
         name: "request-patch-root",
-        input: { kind: "request", method: "PATCH", path: "/", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "PATCH", url: "/", headers: [], body: "" },
       },
       {
         name: "response-200-with-headers",
@@ -625,58 +624,58 @@ async function buildSuites(): Promise<SuiteFile[]> {
       },
       {
         name: "request-method-trace",
-        input: { kind: "request", method: "TRACE", path: "/api", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "TRACE", url: "/api", headers: [], body: "" },
         error: "invalid_method",
       },
       {
         name: "request-query-raw-space",
-        input: { kind: "request", method: "GET", path: "/api", query: "a=b c", headers: [], body: "" },
-        error: "invalid_path",
+        input: { kind: "request", method: "GET", url: "/api?a=b c", headers: [], body: "" },
+        error: "invalid_url",
       },
       {
         name: "request-path-double-slash",
-        input: { kind: "request", method: "GET", path: "/a//b", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/a//b", headers: [], body: "" },
       },
       {
         name: "request-path-dot-dot",
-        input: { kind: "request", method: "GET", path: "/a/../b", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/a/../b", headers: [], body: "" },
       },
       {
         name: "request-path-encoded-slash-lowercase",
-        input: { kind: "request", method: "GET", path: "/a/%2f", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/a/%2f", headers: [], body: "" },
       },
       {
         name: "request-path-encoded-slash-uppercase",
-        input: { kind: "request", method: "GET", path: "/a/%2F", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/a/%2F", headers: [], body: "" },
       },
       {
         name: "request-path-encoded-unreserved",
-        input: { kind: "request", method: "GET", path: "/%41", query: "", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/%41", headers: [], body: "" },
       },
       {
         name: "request-path-malformed-percent",
-        input: { kind: "request", method: "GET", path: "/a/%zz", query: "", headers: [], body: "" },
-        error: "invalid_path",
+        input: { kind: "request", method: "GET", url: "/a/%zz", headers: [], body: "" },
+        error: "invalid_url",
       },
       {
         name: "request-query-square-brackets",
-        input: { kind: "request", method: "GET", path: "/a", query: "q=[x]", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/a?q=[x]", headers: [], body: "" },
+        error: "invalid_url",
       },
       {
-        name: "request-path-under-wake-is-dispatchers-job",
-        input: { kind: "request", method: "GET", path: "/wake/x", query: "", headers: [], body: "" },
+        name: "request-path-under-wake-is-receivers-job",
+        input: { kind: "request", method: "GET", url: "/wake/x", headers: [], body: "" },
       },
       {
         name: "request-query-lowercase-percent",
-        input: { kind: "request", method: "GET", path: "/api", query: "q=%e3%81%82", headers: [], body: "" },
+        input: { kind: "request", method: "GET", url: "/api?q=%e3%81%82", headers: [], body: "" },
       },
       {
         name: "request-duplicate-accept-keeps-order",
         input: {
           kind: "request",
           method: "GET",
-          path: "/api",
-          query: "",
+          url: "/api",
           headers: [
             ["accept", "text/html"],
             ["accept", "application/json"],
@@ -689,15 +688,13 @@ async function buildSuites(): Promise<SuiteFile[]> {
         input: {
           kind: "request",
           method: "POST",
-          path: "/api",
-          query: "",
+          url: "/api",
           headers: [
             ["content-type", "text/plain"],
             ["content-type", "application/json"],
           ],
           body: "",
         },
-        error: "invalid_header",
       },
       {
         name: "response-duplicate-content-type",
@@ -710,43 +707,37 @@ async function buildSuites(): Promise<SuiteFile[]> {
           ],
           body: "",
         },
-        error: "invalid_header",
       },
       {
         name: "response-location-protocol-relative",
         input: { kind: "response", status: 302, headers: [["location", "//evil.example/x"]], body: "" },
-        error: "invalid_header",
       },
       {
         name: "response-location-absolute-url",
         input: { kind: "response", status: 302, headers: [["location", "https://evil.example/"]], body: "" },
-        error: "invalid_header",
       },
       {
         name: "response-location-backslash",
         input: { kind: "response", status: 302, headers: [["location", "/\\evil.example"]], body: "" },
-        error: "invalid_header",
       },
       {
         name: "response-location-bare-relative",
         input: { kind: "response", status: 302, headers: [["location", "x/y"]], body: "" },
-        error: "invalid_header",
       },
       {
         name: "request-header-cookie",
-        input: { kind: "request", method: "GET", path: "/api", query: "", headers: [["cookie", "a=b"]], body: "" },
+        input: { kind: "request", method: "GET", url: "/api", headers: [["cookie", "a=b"]], body: "" },
       },
       {
         name: "request-header-arbitrary-and-case-preserved",
-        input: { kind: "request", method: "GET", path: "/api", query: "", headers: [["X-Trace-Id", "abc"]], body: "" },
+        input: { kind: "request", method: "GET", url: "/api", headers: [["X-Trace-Id", "abc"]], body: "" },
       },
       {
         name: "request-header-value-crlf",
         input: {
           kind: "request",
           method: "GET",
-          path: "/api",
-          query: "",
+          url: "/api",
           headers: [["content-type", "text/plain\r\nSet-Cookie: x=1"]],
           body: "",
         },
@@ -764,6 +755,63 @@ async function buildSuites(): Promise<SuiteFile[]> {
         name: "response-obs-text-field-value",
         input: { kind: "response", status: 200, headers: [["X-Opaque", "\u00e9"]], body: "" },
       },
+      {
+        name: "request-absolute-uri",
+        input: { kind: "request", method: "GET", url: "wake://app/members?id=1", headers: [], body: "" },
+      },
+      {
+        name: "request-https-uri",
+        input: { kind: "request", method: "GET", url: "https://api.example.com/v1/items?id=1", headers: [], body: "" },
+      },
+      {
+        name: "request-relative-reference",
+        input: { kind: "request", method: "x-Custom", url: "a/b", headers: [], body: "" },
+      },
+      {
+        name: "request-empty-url",
+        input: { kind: "request", method: "get", url: "", headers: [], body: "" },
+      },
+      {
+        name: "request-url-fragment",
+        input: { kind: "request", method: "GET", url: "/x#y", headers: [], body: "" },
+        error: "invalid_url",
+      },
+      {
+        name: "request-url-quote",
+        input: { kind: "request", method: "GET", url: '/a"b', headers: [], body: "" },
+        error: "invalid_url",
+      },
+      {
+        name: "request-url-too-long",
+        input: { kind: "request", method: "GET", url: "a".repeat(6145), headers: [], body: "" },
+        error: "invalid_url",
+      },
+      {
+        name: "request-method-connect",
+        input: { kind: "request", method: "connect", url: "/api", headers: [], body: "" },
+        error: "invalid_method",
+      },
+      {
+        name: "request-method-track",
+        input: { kind: "request", method: "TrAcK", url: "/api", headers: [], body: "" },
+        error: "invalid_method",
+      },
+      ...["GET", "HEAD"].map(method => ({
+        name: `request-null-body-${method.toLowerCase()}`,
+        input: { kind: "request", method, url: "/api", headers: [], body: "01" },
+        error: "invalid_request",
+      })),
+      ...[204, 205, 304].flatMap(status => [
+        {
+          name: `response-empty-${status}`,
+          input: { kind: "response", status, headers: [], body: "" },
+        },
+        {
+          name: `response-null-body-${status}`,
+          input: { kind: "response", status, headers: [], body: "01" },
+          error: "invalid_request",
+        },
+      ]),
     ],
   ]);
 
