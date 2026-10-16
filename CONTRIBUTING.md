@@ -71,3 +71,46 @@ git status --short ../../spec         # 意図した変更がなければ空
 ## 依存ライブラリの追加
 
 採用の条件（ライセンス、監査、依存の少なさ、仕様との厳密な一致、バージョンの固定）は [impl/ts/DESIGN.md](impl/ts/DESIGN.md#5-外部ライブラリ) にまとめています。条件を満たすことを PR に書いてください。
+
+## リリース（npm / JSR）
+
+### バンプ手順
+
+以下のコマンドは `impl/ts` で実行します。
+
+1. 6 つの公開パッケージ（`core/bytes`、`core/codec`、`core/crypto`、`core/protocol`、`client`、`server`）の `package.json` と `jsr.json` の `"version"` を新しいバージョンに書き換える
+2. すべてのワークスペース（vectors / demo を含む）の `package.json` 内の公開パッケージへの内部依存と、各 `jsr.json` の `imports` 内の `jsr:@wake-protocol/*@…` を同じ完全固定のバージョンに揃える。vectors / demo 自身のバージョンは `0.0.0` のままにする
+3. `npm install` を実行して `package-lock.json` を更新する
+4. `node scripts/check-version.ts` を実行して整合性を確認する
+5. CHANGELOG.md の未リリース節の見出しを更新する（例: `## v0.6.0（未リリース）` → `## v0.6.0 (YYYY-MM-DD)`。日付は公開日）
+6. タグを打って push する（例: `impl/ts/v0.6.0`）
+
+### タグ名の形式
+
+`impl/ts/vX.Y.Z` — Go モジュール方式に倣い、実装ごとのパスを接頭辞にします（将来 `impl/go/v*` なども同じ形式で管理できます）。
+
+### CI が行うこと（`.github/workflows/ts-ci.yml`）
+
+pull_request と main へのプッシュで、`impl/ts/**`、`spec/**`、CI ワークフロー自身に変更があると起動します。Node 22 で実行し、e2e は含めません。
+
+- `npm ci` → `npm run typecheck` → `npm test` → `npm run vectors` → `spec/` の差分チェック → `npm run check-pack` → JSR の dry-run（`npx jsr@0.14.3 publish --dry-run`。手元で未コミットの変更があるときは `--allow-dirty` を付ける）
+
+### 公開ワークフロー（`.github/workflows/ts-publish.yml`）
+
+`impl/ts/v*` タグの push で起動します。環境名は `npm-jsr`（GitHub Environments）、Node は 24、npm は 11.5.1 以降を使います。
+
+- 同じ確認を行い、タグのバージョンとパッケージバージョンを照合してから公開します
+- npm: trusted publisher（OIDC）で公開し、provenance を付けます。`NPM_TOKEN` があれば、trusted publisher が未設定のパッケージ（初回）はトークンで公開します。すでに公開されたバージョンはスキップします。`0.6.0` のような通常のバージョンを `latest` dist-tag で公開し、`-alpha` は付けません
+- JSR: OIDC で公開。JSR はすでに公開済みのバージョンをスキップします
+
+1.0 未満の GitHub Release は、既存の v0.4.0 / v0.5.0 と同じく **Pre-release** にします。これは npm の dist-tag とは別の設定です。
+
+### 初回のセットアップ
+
+最初のタグを push する前に、一度だけ行います。
+
+1. **GitHub**: `npm-jsr` 環境を作成します（必要なら Required reviewers を設定して、公開の前に承認を求めます）
+2. **npm**: `wake-protocol` org を作成し、公開できる granular access token を `NPM_TOKEN` として `npm-jsr` 環境のシークレットに登録します。npm の trusted publisher は既存のパッケージにしか設定できないため、初回だけトークンで公開します
+3. **JSR**: `@wake-protocol` スコープと 6 パッケージを作成し、各パッケージの設定で GitHub リポジトリ `nozomi-hiragi/wake-protocol` をリンクします（[JSR の手順](https://jsr.io/docs/publishing-packages#publishing-from-github-actions)）
+4. タグを push して公開します
+5. 公開後、npmjs.com の各パッケージで trusted publisher を設定し（リポジトリ `nozomi-hiragi/wake-protocol`、ワークフロー `ts-publish.yml`、環境 `npm-jsr`。[npm の手順](https://docs.npmjs.com/trusted-publishers/)）、`NPM_TOKEN` を削除してトークンも失効させます。以後は OIDC だけで公開します
