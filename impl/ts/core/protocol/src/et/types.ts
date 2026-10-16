@@ -15,7 +15,7 @@ export const ET_BODY_MIN = 1024;
 export const ET_BODY_MAX = 1024 * 1024;
 
 const LP_PREFIX_LEN = 4;
-const ET_METHOD_MAX = Math.max(...ET_METHODS.map((method) => method.length));
+const ET_METHOD_MAX: number = Math.max(...ET_METHODS.map((method) => method.length));
 // A header pair needs at least one name byte; empty values permit ET_HEADERS_MAX pairs.
 const ET_HEADERS_MAX_ENCODED = ET_HEADERS_MAX + 2 * LP_PREFIX_LEN * ET_HEADERS_MAX;
 

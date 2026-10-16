@@ -1,0 +1,56 @@
+name: Publish TypeScript packages
+
+on:
+  push:
+    tags: ['impl/ts/v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-jsr
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: impl/ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - name: Verify npm supports trusted publishing
+        run: |
+          npm --version
+          if ! node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            process.exit(major > 11 || major === 11 && (minor > 5 || minor === 5 && patch >= 1) ? 0 : 1);
+          ' "$(npm --version)"; then
+            npm install --global npm@11.5.1
+          fi
+          npm --version
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Verify test vectors
+        run: |
+          npm run vectors
+          git diff --exit-code -- ../../spec
+          test -z "$(git ls-files --others --exclude-standard -- ../../spec)"
+      - run: npm run check-pack
+      - run: npx --yes jsr@0.14.3 publish --dry-run
+      - name: Verify release tag
+        run: node --conditions=@wake-protocol/source scripts/check-version.ts "$GITHUB_REF_NAME"
+      - name: Publish to npm
+        env:
+          # npm tries trusted publishing (OIDC) first and falls back to this token when
+          # no trusted publisher is configured yet (the first publish of each package).
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bash scripts/publish-npm.sh
+      - name: Publish to JSR
+        run: npx --yes jsr@0.14.3 publish

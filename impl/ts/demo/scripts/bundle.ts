@@ -11,6 +11,7 @@ export async function buildBrowser(): Promise<void> {
     bundle: true,
     format: "esm",
     platform: "browser",
+    conditions: ["@wake-protocol/source"],
     target: "es2022",
     sourcemap: false,
     logLevel: "warning",

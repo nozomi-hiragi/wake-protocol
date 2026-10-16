@@ -1,22 +1,48 @@
 {
   "name": "@wake-protocol/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.6.0",
+  "description": "WAKE protocol core: KX, SM, ET, TA and KR messages, key schedule and errors",
+  "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    ".": {
+      "@wake-protocol/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@wake-protocol/source": "./src/testing.ts"
+    }
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "prepack": "tsc -p tsconfig.build.json",
+    "test": "node --conditions=@wake-protocol/source --test test/*.test.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
     "@nozomi-hiragi/i-json": "0.1.2",
-    "@wake-protocol/bytes": "0.0.0",
-    "@wake-protocol/codec": "0.0.0",
-    "@wake-protocol/crypto": "0.0.0",
+    "@wake-protocol/bytes": "0.6.0",
+    "@wake-protocol/codec": "0.6.0",
+    "@wake-protocol/crypto": "0.6.0",
     "@scure/base": "2.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nozomi-hiragi/wake-protocol.git",
+    "directory": "impl/ts/core/protocol"
+  },
+  "homepage": "https://github.com/nozomi-hiragi/wake-protocol/tree/main/impl/ts/core/protocol#readme",
+  "bugs": {
+    "url": "https://github.com/nozomi-hiragi/wake-protocol/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

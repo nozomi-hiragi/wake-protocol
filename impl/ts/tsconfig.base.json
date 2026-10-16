@@ -16,6 +16,7 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "noUncheckedIndexedAccess": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "customConditions": ["@wake-protocol/source"]
   }
 }

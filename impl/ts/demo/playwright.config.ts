@@ -8,7 +8,7 @@ export default defineConfig({
   use: { baseURL: `http://localhost:${port}` },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: {
-    command: "node scripts/serve.ts",
+    command: "node --conditions=@wake-protocol/source scripts/serve.ts",
     url: `http://localhost:${port}/`,
     env: { PORT: String(port) },
     reuseExistingServer: false,

@@ -1,0 +1,10 @@
+{
+  "workspace": [
+    "./core/bytes",
+    "./core/codec",
+    "./core/crypto",
+    "./core/protocol",
+    "./client",
+    "./server"
+  ]
+}

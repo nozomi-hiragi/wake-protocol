@@ -18,6 +18,8 @@ npm run typecheck
 npm test                         # 依存の検査、すべてのパッケージのテスト
 npm run vectors                  # テストベクターを再生成
 git status --short ../../spec    # 意図した変更がなければ空
+npm run build                    # 6 つの公開パッケージを依存順にビルド（dist/ を生成）
+npm run check-pack               # build → npm pack → 消費者テストをまとめて実行（CI 用）
 ```
 
 ## 守ること

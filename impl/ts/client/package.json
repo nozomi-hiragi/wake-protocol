@@ -1,20 +1,44 @@
 {
   "name": "@wake-protocol/client",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.6.0",
+  "description": "WAKE protocol client (KX, SM, KR, TA, ET) for browsers and Node.js",
+  "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "@wake-protocol/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "prepack": "tsc -p tsconfig.build.json",
+    "test": "node --conditions=@wake-protocol/source --test test/*.test.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@wake-protocol/core": "0.0.0",
-    "@wake-protocol/bytes": "0.0.0",
-    "@wake-protocol/codec": "0.0.0",
+    "@wake-protocol/core": "0.6.0",
+    "@wake-protocol/bytes": "0.6.0",
+    "@wake-protocol/codec": "0.6.0",
     "@scure/base": "2.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nozomi-hiragi/wake-protocol.git",
+    "directory": "impl/ts/client"
+  },
+  "homepage": "https://github.com/nozomi-hiragi/wake-protocol/tree/main/impl/ts/client#readme",
+  "bugs": {
+    "url": "https://github.com/nozomi-hiragi/wake-protocol/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
