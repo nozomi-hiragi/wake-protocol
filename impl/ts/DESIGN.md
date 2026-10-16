@@ -92,7 +92,7 @@ WAKE の構造は LP（u32 の長さ ‖ 中身の繰り返し）で組み立て
 | メッセージの暗号化・復号に合わない鍵を渡した | `TypeError`（AES-GCM のラッパーが事前に検査する） | `seal` に AES-128 の鍵や HMAC の鍵を渡す |
 | Web Crypto 自身の失敗 | Web Crypto の `DOMException` がそのまま伝わる | Finished の関数に AES の鍵を渡す → `InvalidAccessError` |
 | 受け取ったデータの形式不正 | `WakeError`（§12 のコード） | `parseWire` → `bad_request`、ET のデコード → `invalid_request` |
-| 意味の検査 | `WakeError`（エンコード時も） | `checkContext` → `bad_request`、`checkContent` → `invalid_content`、ET → `invalid_method` / `invalid_path` / `invalid_header`、ET の status が範囲外 → `invalid_request` |
+| 意味の検査 | `WakeError`（エンコード時も） | `checkContext` → `bad_request`、`checkContent` → `invalid_content`、ET → `invalid_method` / `invalid_url` / `invalid_header`、ET の status が範囲外や、本文を持てない要求・応答の本文 → `invalid_request` |
 | 上限の設定・超過 | `WakeError` | 設定値の不正 → `invalid_option`、超過 → `too_large` |
 | 認証の失敗 | `WakeError("reauth")` | `open` で復号に失敗した |
 
