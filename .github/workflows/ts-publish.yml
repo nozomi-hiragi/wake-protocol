@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-jsr
     permissions:
-      contents: write
+      contents: read
       id-token: write
     env:
       RELEASE_VERSION: ${{ needs.plan.outputs.version }}
@@ -104,6 +104,27 @@ jobs:
         run: bash scripts/publish-npm.sh
       - name: Publish to JSR
         run: npx --yes jsr@0.14.3 publish
+  release:
+    needs: [plan, publish]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # Only this job can write to the repository; it installs no dependencies.
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+    defaults:
+      run:
+        working-directory: impl/ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare release notes
+        run: node scripts/changelog.ts "$RELEASE_VERSION" "$RUNNER_TEMP/ts-release-notes.md"
       - name: Create tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

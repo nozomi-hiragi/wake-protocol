@@ -110,7 +110,7 @@ pull_request と main へのプッシュで、`impl/ts/**`、`spec/**`、CI ワ�
 
 1.0 未満の GitHub Release は、既存の v0.4.0 / v0.5.0 と同じく **Pre-release** にします。これは npm の dist-tag とは別の設定です。
 
-一部のパッケージの公開後に失敗した場合は、Actions → Publish TypeScript packages → Run workflow から `main` を選び、再実行します。公開済みのバージョンはスキップして続行します。タグの作成後に Release の作成だけが失敗した場合は、元の実行の失敗したジョブを再実行します（新しい実行では既存タグのため `publish` がスキップされます）。
+一部のパッケージの公開後に失敗した場合は、Actions → Publish TypeScript packages → Run workflow から `main` を選び、再実行します。公開済みのバージョンはスキップして続行します。タグと Release は、公開のあとに別の `release` ジョブ（リポジトリへの書き込み権限はこのジョブだけが持ちます）で作成します。このジョブだけが失敗した場合は、元の実行の失敗したジョブを再実行します（タグが作られたあとの新しい実行は、既存タグのため何もしません）。
 
 ### 初回のセットアップ
 
