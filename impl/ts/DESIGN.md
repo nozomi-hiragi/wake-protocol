@@ -149,7 +149,10 @@ ET の status は数値ですが、§11 の意味の検査として扱うので�
 - Node 22.18 以降が、TypeScript を変換せずに型を取り除いて実行します。そのため `erasableSyntaxOnly` を有効にしていて、`enum`、`namespace`、コンストラクタ引数のプロパティ宣言など、実行時のコードを生む構文は使えません。
 - import には `.ts` の拡張子を付けます。型だけの import には `type` を付けます（`verbatimModuleSyntax`）。
 - `noUncheckedIndexedAccess` を有効にしているので、配列の要素は `undefined` になりうる型になります。長さを検査済みの場所では `!` を使います。
-- 各パッケージの `tsconfig.json` は、`tsconfig.base.json` を `extends` します。
+- 各パッケージの `tsconfig.json` は、`tsconfig.base.json` を `extends` します。`tsconfig.base.json` は `customConditions: ["@wake-protocol/source"]` を持ち、開発・テスト・型検査のときにパッケージの `src/` を直接解決します（ビルド済みの `dist/` ではなく）。
+- `node --test` や `node` でスクリプトを実行するときは、`--conditions=@wake-protocol/source` フラグが必要です（`scripts/check-deps.ts`、`scripts/check-version.ts` などの起動、各パッケージの test コマンド）。vectors の生成スクリプトと demo のビルドスクリプトも同じ条件を使います。
+- **npm ビルド**: 各公開パッケージの `tsconfig.build.json` は `customConditions: []` で上書きし、source condition を無効にします。これにより tsc が兄弟パッケージの `src/` を `rootDir` の外から引き込まず、ビルド済みの `dist/` だけを参照します。ビルドは bytes → codec → crypto → core → client → server の依存順で行います（`npm run build`）。
+- **`./testing` サブパス**: `@wake-protocol/core/testing` と `@wake-protocol/server/testing` は、テスト専用のヘルパーを提供します。npm の `files` と JSR の `publish.include` には含めないため、npm / JSR の公開パッケージには含まれません。ワークスペース内部からだけ解決できます。
 - コメントは英語で短く書きます。core のファイルは、先頭のコメントに対応する仕様の § を書きます。汎用パッケージには § を書きません。
 - 整形ツールは入れていません。import の重複や並び、インデントは、周りのコードに合わせて手で揃えます。
 

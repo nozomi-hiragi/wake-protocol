@@ -14,10 +14,12 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces",
-    "test": "node scripts/check-deps.ts && node --test scripts/check-deps.test.ts && npm test --workspaces",
+    "test": "node --conditions=@wake-protocol/source scripts/check-deps.ts && node --conditions=@wake-protocol/source scripts/check-version.ts && node --conditions=@wake-protocol/source --test scripts/*.test.ts && npm test --workspaces",
     "vectors": "npm run vectors -w @wake-protocol/vectors",
     "e2e": "npm run e2e -w @wake-protocol/demo",
-    "start": "npm start -w @wake-protocol/demo"
+    "start": "npm start -w @wake-protocol/demo",
+    "build": "npm run prepack -w @wake-protocol/bytes && npm run prepack -w @wake-protocol/codec && npm run prepack -w @wake-protocol/crypto && npm run prepack -w @wake-protocol/core && npm run prepack -w @wake-protocol/client && npm run prepack -w @wake-protocol/server",
+    "check-pack": "node --conditions=@wake-protocol/source scripts/check-pack.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

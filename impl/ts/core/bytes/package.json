@@ -1,15 +1,39 @@
 {
   "name": "@wake-protocol/bytes",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.6.0",
+  "description": "Immutable byte values, fixed-width integers, and branded types for the WAKE protocol",
+  "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "@wake-protocol/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "prepack": "tsc -p tsconfig.build.json",
+    "test": "node --conditions=@wake-protocol/source --test test/*.test.ts",
     "typecheck": "tsc -p ."
   },
-  "dependencies": {}
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nozomi-hiragi/wake-protocol.git",
+    "directory": "impl/ts/core/bytes"
+  },
+  "homepage": "https://github.com/nozomi-hiragi/wake-protocol/tree/main/impl/ts/core/bytes#readme",
+  "bugs": {
+    "url": "https://github.com/nozomi-hiragi/wake-protocol/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

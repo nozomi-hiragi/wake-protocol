@@ -98,7 +98,23 @@
 | `demo/test/integration.test.ts`、`demo/test/wake.test.ts` | client と server の結合テスト（KX、SM、KR、TA、TA+KR、ET） |
 | `demo/test/e2e/login.spec.ts`、`demo/test/e2e/operations.spec.ts`、`demo/test/e2e/multi-tab.spec.ts` | Chromium の仮想認証器を使う e2e（`multi-tab.spec.ts` は2タブでのログインの共有） |
 
-`npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import でき、宣言はパッケージ自身の `devDependencies` にだけできます。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。
+`npm test` は最初に `scripts/check-deps.ts` で、パッケージ間の依存と外部の実行時依存が許可した表（`allowedEdges`）のとおりかを、`package.json` の宣言と import の両方で検査します。表の外で許可するのは Node の組み込みモジュールだけです。ルートの開発用依存（`typescript`、`@types/node`）は、各パッケージの `test/` と `scripts/` からだけ import でき、宣言はパッケージ自身の `devDependencies` にだけできます。依存の方針は [DESIGN.md](DESIGN.md#22-依存は一方向にし汎用パッケージどうしは依存しない) を参照してください。各パッケージの `tsconfig.json` は `tsconfig.base.json` を `extends` します。開発時は `@wake-protocol/source` 条件で `src/` を直接解決するため、ビルド前でもテストできます。npm scripts はこの条件を設定済みです。
+
+## パッケージの利用
+
+`@wake-protocol/bytes`、`@wake-protocol/codec`、`@wake-protocol/crypto`、`@wake-protocol/core`、`@wake-protocol/client`、`@wake-protocol/server` の 6 パッケージを、同じバージョンで npm / JSR に公開します。vectors、demo、ワークスペースのルートは開発用で、公開しません。
+
+必要なパッケージをインストールします（以下は client / server の例）。npm にはビルド済みの ESM と型定義、JSR には TypeScript のソースを含めます。
+
+```sh
+npm install @wake-protocol/client @wake-protocol/server
+# JSR（npm など）
+npx jsr add @wake-protocol/client @wake-protocol/server
+# JSR（Deno）
+deno add jsr:@wake-protocol/client jsr:@wake-protocol/server
+```
+
+`@wake-protocol/core/testing` と `@wake-protocol/server/testing` はワークスペース内の開発専用で、公開パッケージには含めません。**本番では使わないでください。**
 
 ## 使い方
 
@@ -110,6 +126,8 @@ npm ci
 npm run typecheck
 npm test          # 依存の検査、テストベクターの照合、node:crypto との突き合わせ、往復テスト、client と server の結合テスト
 npm run vectors   # spec/test-vectors/*.json を再生成
+npm run build     # 6 パッケージを依存順にビルド（各 dist/ に ESM と型定義）
+npm run check-pack # npm tarball の内容と、インストールした消費者の実行・型検査
 npx playwright install chromium   # 初回だけ。e2e 用のブラウザ
 npm run e2e       # demo の e2e（登録、ログイン、ログアウト、KR、Operation の承認・拒否、TA+KR、タブ間のログインの共有）
 npm start         # デモを http://localhost:8787 で起動（手元のパスキーで試せる）
@@ -242,7 +260,7 @@ core は、既定の ET 上限での最大エンコード長を `ET_REQUEST_MAX_
 
 ### テスト専用 API
 
-`@wake-protocol/core/testing` には、乱数を固定するものや制約のない符号化を置いています（`sealWithIv`、`importEcdhPrivateKey`、`encodeChallengeInput`）。本番のコードでは使いません。WebAuthn Challenge は、公開 API の儀式ごとの `kxChallenge` / `krChallenge` / `taChallenge` / `taKrChallenge` で作ります。
+`@wake-protocol/core/testing` には、乱数を固定するものや制約のない符号化を置いています（`sealWithIv`、`importEcdhPrivateKey`、`encodeChallengeInput`）。公開パッケージには含めず、`@wake-protocol/source` 条件を指定したワークスペース内でだけ使います。WebAuthn Challenge は、公開 API の儀式ごとの `kxChallenge` / `krChallenge` / `taChallenge` / `taKrChallenge` で作ります。
 
 ## テストベクター
 

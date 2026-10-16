@@ -1,0 +1,9 @@
+{
+  "name": "@wake-protocol/codec",
+  "version": "0.6.0",
+  "exports": "./src/index.ts",
+  "publish": {
+    "include": ["src", "README.md", "LICENSE"],
+    "exclude": ["src/testing.ts", "**/*.test.ts"]
+  }
+}

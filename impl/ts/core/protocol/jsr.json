@@ -1,0 +1,16 @@
+{
+  "name": "@wake-protocol/core",
+  "version": "0.6.0",
+  "imports": {
+    "@wake-protocol/bytes": "jsr:@wake-protocol/bytes@0.6.0",
+    "@wake-protocol/codec": "jsr:@wake-protocol/codec@0.6.0",
+    "@wake-protocol/crypto": "jsr:@wake-protocol/crypto@0.6.0",
+    "@scure/base": "jsr:@scure/base@2.4.0",
+    "@nozomi-hiragi/i-json": "jsr:@nozomi-hiragi/i-json@0.1.2"
+  },
+  "exports": "./src/index.ts",
+  "publish": {
+    "include": ["src", "README.md", "LICENSE"],
+    "exclude": ["src/testing.ts", "**/*.test.ts"]
+  }
+}

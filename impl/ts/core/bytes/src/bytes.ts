@@ -138,4 +138,4 @@ export class Byte8 extends Bytes {
   }
 }
 
-export const EMPTY = new Bytes(new Uint8Array(0));
+export const EMPTY: Bytes = new Bytes(new Uint8Array(0));
