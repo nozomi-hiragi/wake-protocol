@@ -6,9 +6,9 @@
 |---|---|
 | プロトコル | WAKE（WebAuthn Authenticated Key Exchange） |
 | ワイヤ上のバージョン | `WAKE/1` |
-| 文書版 | 設計ドラフト **v0.5** |
+| 文書版 | 設計ドラフト **v0.6** |
 | 最終更新 | 2026-10-16 |
-| 前版 | v0.4（2026-10-10） |
+| 前版 | v0.5（2026-10-16） |
 | 対象 | Webブラウザのクライアント、アプリケーションサーバー、複数サーバー構成 |
 | 基本暗号 | WebAuthn / 一時ECDH P-256 / HKDF-SHA-256 / HMAC-SHA-256 / AES-256-GCM |
 | 状態 | **未監査の提案仕様**。仮実装（`impl/ts/`）とテストベクター（`spec/test-vectors/`）で検証中。第三者による暗号プロトコルレビューを経るまで本番採用しない |
@@ -17,7 +17,16 @@
 
 ---
 
-## 0. v0.4からの主な変更
+## 0. v0.5からの主な変更
+
+| 区分 | 変更 |
+|---|---|
+| WAKE-ET | `EtRequest`のパスとクエリを、RFC 3986のURI-referenceである`url`の1フィールドにまとめた（§11.2、§11.3）。絶対URI（`wake://…`、`https://…`）も相対参照も運べる。ワイヤ形式はv0.5と互換性がない |
+| WAKE-ET | 受信側の解釈をWAKEの範囲外とした（§11.5）。登録済みルートとの完全一致、`route_not_found`、`/wake/`への転送禁止とプロキシの禁止を削除し、URLによる振り分けや転送は受信した実装が決める |
+| WAKE-ET | 残す検査を、Fetch Standardの`Request`・`Response`に組み立てられる範囲に絞った（§11.2〜§11.4）。methodはtoken（`CONNECT`・`TRACE`・`TRACK`を除く）、`GET`・`HEAD`の要求と`204`・`205`・`304`の応答は本文を持たない。ヘッダーの重複の拒否、`host`の規則、`location`の制限を削除 |
+| ETのエラー | `invalid_path`を`invalid_url`に改名し、`route_not_found`を削除（§11.6） |
+
+### 0.1 v0.4からv0.5への主な変更
 
 仮実装とテストベクターによる検証を受けた変更。
 
@@ -30,7 +39,7 @@
 | テストベクター | 異常系の`expectedError`コード一覧とJSONでの表し方を定義（§16）。`spec/test-vectors/`に収録 |
 | WAKE-KX | `/auth/start`の応答に`serverTime`を追加（§7.2）。クライアントは`expiresAt`を端末の時刻に換算して、`/auth/complete`の再送の期限に使う（§7.7）。端末の時計がずれていても、再送の期限を正しく判断できるようにするため |
 
-### 0.1 v0.3からv0.4への主な変更
+### 0.2 v0.3からv0.4への主な変更
 
 | 区分 | 変更 |
 |---|---|
@@ -107,7 +116,7 @@ WAKEは、**WebAuthnでユーザーを認証すると同時に一時ECDH鍵交�
 | 鍵交換 | 認証付きECDH鍵交換、交換状態の単回使用 | 鍵の具体的な保存基盤 |
 | セッション | 暗号化・鍵世代・失効 | 期限などの運用ポリシー |
 | 通常API | 暗号化・改ざん検出・暗号Nonceの安全性・requestIdの付与・要求と応答の対応付け | 業務処理、リプレイ対策、冪等性 |
-| WAKE-ET | 汎用暗号化トランスポート、登録済みルートへのディスパッチ | 内部APIの処理 |
+| WAKE-ET | 汎用暗号化トランスポート（HTTP形式の要求・応答の符号化と暗号化） | 受信した要求の解釈（URLのスキームやパスの意味、振り分け、転送）と処理 |
 | 操作要求 | 不変の文字列、Nonce生成、`operationId`、状態管理 | 要求内容（content）の定義、認否者の指定権限の検証 |
 | 操作承認 | 認否者の認証、WebAuthnによる認否の確定、認否の一意性 | 承認結果の利用方法 |
 | 操作実行 | 対象外 | 実行、冪等性、結果管理、実行時のリプレイ対策、複数人承認の集計 |
@@ -1172,55 +1181,53 @@ contextは`wake-et`とする。WAKE-ETの利用は任意であり、実装者は
 ### 11.2 論理リクエスト・レスポンス
 
 ```text
-EtRequest  = LP(ascii("WAKE/1 et-req"), ascii(method), ascii(path), ascii(query), headers, body)
+EtRequest  = LP(ascii("WAKE/1 et-req"), ascii(method), ascii(url), headers, body)
 EtResponse = LP(ascii("WAKE/1 et-res"), u16(status), headers, body)
 headers    = LP(name1, value1, name2, value2, …)     // nameはASCII、valueはHTTP field octets。0組なら ε
 ```
 
-- `method`: `GET` / `POST` / `PUT` / `PATCH` / `DELETE`（大文字）。
-- `query`: `?`を除いた生のクエリ文字列（空でもよい）。4,096バイト以下。URL queryの可視ASCII文字で構成し、`#`は含まない。パーセントエンコードは`%`に16進2桁を続ける（16進は大文字・小文字のどちらでもよい）。ETは値を正規化しない。
-- `body`: 生のバイト列。既定の上限は1MiB。
-- `status`: 200〜599。
+ETの要求・応答は、Fetch Standardの`Request`・`Response`に組み立てられる範囲に限る。WAKEが検査するのは§11.3〜§11.4の形式だけで、内容の解釈には関与しない（§11.5）。
 
-### 11.3 パス
+- `method`: RFC 9110のtoken。1〜32バイト。大文字・小文字は受け取ったまま運ぶ。Fetch Standardが禁止する`CONNECT`、`TRACE`、`TRACK`（大文字・小文字を区別しない）は拒否する（MUST）。
+- `url`: §11.3のURI。
+- `body`: 生のバイト列。既定の上限は1MiB。`method`が`GET`または`HEAD`（大文字・小文字を区別しない）の要求は、空でない本文を持てない（MUST）。
+- `status`: 200〜599。`204`、`205`、`304`の応答は、空でない本文を持てない（MUST）。
 
-パスは正規化せず、規則に合わないものは**拒否する**（MUST）。
+### 11.3 URL
 
-- `/`で始まり、2,048バイト以下で、URL pathの可視ASCII文字で構成される。`?`と`#`は含めない。
-- パーセントエンコードは`%`に16進2桁を続ける。ETはパスを正規化せず、`.`/`..`セグメント、連続する`/`、エンコードされた区切り文字や非予約文字を独自に拒否しない。
+`url`はRFC 3986のURI-referenceとし、規則に合わないものは**拒否する**（MUST）。
 
-ETの符号化はこの形式の検査だけを行い、どのパスに振り分けるかには関与しない。振り分けの規則は§11.5に従う。
+- 6,144バイト以下で、URIに使える可視ASCII文字（unreserved、reserved、`%`）で構成される。フラグメント（`#`以降）は含めない。
+- パーセントエンコードは`%`に16進2桁を続ける（16進は大文字・小文字のどちらでもよい）。
+- スキームとオーソリティを持つ絶対URI（例: `wake://app/members`、`https://api.example.com/v1/items?id=1`）と、相対参照（例: `/members?id=1`）のどちらも運べる。
+- ETは値を正規化しない。`.`/`..`セグメント、連続する`/`、エンコードされた区切り文字や非予約文字も、そのまま運ぶ。
 
 ### 11.4 ヘッダー
 
-- 名前はRFC 9110のtoken（ASCII）とし、受け取った大文字・小文字を保つ。名前の比較は大文字・小文字を区別しない。値はHTTP field octetsとして扱う。ASCIIではTAB、SP〜VCHARをそのまま符号化し、obs-textはU+0080〜U+00FFを対応する1バイトに写す（UTF-8へ変換しない）。C0制御文字（TABを除く）とDEL、U+00FFを超える値は拒否する。ヘッダー全体は8KiB以下とする。長さは各ヘッダーの名前と値のバイト数の合計で数える（LPの長さ欄は含めない）。
-- 同じ名前のヘッダーが複数あってもよい。名前・値・順序を保って運び、HTTPのフィールドごとの規則（RFC 9110 §5.3）に従って解釈する。`Set-Cookie`のように結合できないフィールドは別々の行として保持する。`content-type`、`content-disposition`、`etag`、`last-modified`、`location`、`retry-after`、`if-modified-since`、`if-unmodified-since`、`idempotency-key`の重複は拒否する（MUST）。要求の`host`はHTTP/1.1の規則（RFC 9112 §3.2）に従い、複数行を拒否する（MUST）。
-- HTTP field nameの独自allowlist/denylistは設けない。
-- `location`の値は、同じオリジン内の絶対パス（RFC 3986のpath-absolute。`/`で始まり`//`で始まらない）と、任意の`?`クエリに限る（MUST）。使える文字はpchar、`/`、`?`とパーセントエンコードだけで、バックスラッシュは含まない（ブラウザが`/\`をオーソリティとして扱う場合があるため）。スキームやオーソリティを含む値、相対参照（`./`や`../`、パス名だけのもの）は拒否する。ETで運ぶ応答が別のオリジンへ誘導することを防ぐためである。
+- 名前はRFC 9110のtoken（ASCII）とし、受け取った大文字・小文字を保つ。値はHTTP field octetsとして扱う。ASCIIではTAB、SP〜VCHARをそのまま符号化し、obs-textはU+0080〜U+00FFを対応する1バイトに写す（UTF-8へ変換しない）。C0制御文字（TABを除く）とDEL、U+00FFを超える値は拒否する。ヘッダー全体は8KiB以下とする。長さは各ヘッダーの名前と値のバイト数の合計で数える（LPの長さ欄は含めない）。
+- 同じ名前のヘッダーが複数あってもよい。名前・値・順序を保って運ぶ。`Set-Cookie`のように結合できないフィールドは別々の行として保持する。
+- HTTP field nameの独自allowlist/denylistは設けず、値の意味も検査しない。
 
-### 11.5 ディスパッチと認証情報
+### 11.5 受信側の解釈
 
-- 内部APIはプロセス内のルートハンドラーとして呼び出す。HTTPプロキシやURLフェッチの機能にしてはならない（MUST NOT）。
-- 振り分けはディスパッチを行うアプリケーション側の責任である。**登録済みのルートと完全に一致する場合だけ**ディスパッチし、それ以外は`route_not_found`とする（MUST）。`/wake/`で始まるWAKE内部のエンドポイントへ転送してはならない（MUST NOT）。外部URLへの転送はしない。
-- 認証情報`{userId, sessionId, epoch, credentialId, authTime, requestId}`は、ヘッダーではなくプロセス内のオブジェクト（フレームワークのcontextなど）で渡す（MUST）。
-- WAKE-ET経由でだけ呼ぶルートは、外部ネットワークから直接到達できないようにする（SHOULD）。
+- 復号した`EtRequest`・`EtResponse`をどう解釈するかは、受け取った実装が決める。URLのスキーム・ホスト・パスによる振り分け、未知のURLへの応答、別のサーバーへの転送、ヘッダーの意味づけ（`location`、`host`、重複したフィールドの扱いなど）は、WAKEの範囲外である。
+- サーバーの実装は、復号した要求と、その要求を受理したセッションの認証情報`{userId, sessionId, epoch, credentialId, authTime, requestId}`を受信側に渡す。認証情報はETの中のヘッダーではなく、WAKEのセッションから得たものである（§14.2）。
 
 ### 11.6 ETのエラー
 
-ルーティングの失敗は、暗号化した`EtResponse`で返す。本文はJSON`{"error": {"code": "…"}}`とする。
+ETの形式の違反は、暗号化した`EtResponse`で返す。本文はJSON`{"error": {"code": "…"}}`とする。受信側が返す応答（存在しないURLへの404など）は、受信側が決める。
 
 | status | code | 事象 |
 |---|---|---|
-| 400 | `invalid_path` / `invalid_header` / `invalid_method` | 規則違反（クエリの違反は`invalid_path`とする） |
-| 400 | `invalid_request` | `EtRequest`または`EtResponse`の形式不正（LPの不正、ラベルの不一致、ヘッダーの組が奇数、不正なstatusなど。§12.4） |
-| 404 | `route_not_found` | 未登録のルート |
+| 400 | `invalid_url` / `invalid_header` / `invalid_method` | §11.2〜§11.4の規則違反 |
+| 400 | `invalid_request` | `EtRequest`または`EtResponse`の形式不正（LPの不正、ラベルの不一致、ヘッダーの組が奇数、不正なstatus、本文を持てない要求・応答の本文など。§12.4） |
 | 413 | `too_large` | サイズ超過 |
 
 ### 11.7 独自APIとの共存
 
 - 独自APIは任意のURLで`application/wake`を受け付け、§8.3の手順で復号・暗号化する。
 - 独自APIとWAKE-ETは同じセッション鍵を使い、`context`で区別する。
-- 参考（ライブラリAPI）: クライアント`wake.fetch(path, init)`、`wake.seal(context, plaintext)`、`wake.open(wire, pending)`。サーバー`wakeOpen(request, {contexts})`、`wakeSeal(reply, responseContext)`。
+- 参考（ライブラリAPI）: クライアント`wake.fetch(url, init)`、`wake.seal(context, plaintext)`、`wake.open(wire, pending)`。サーバー`wakeOpen(request, {contexts})`、`wakeSeal(reply, responseContext)`。
 
 ---
 
@@ -1321,7 +1328,7 @@ ETの符号化はこの形式の検査だけを行い、どのパスに振り分
 | `content`の最大長 | 65,536バイト | |
 | contextの最大長 | 256バイト | |
 | ETの本文の最大長 | 1MiB | 設定可能 |
-| ETのパス・クエリ・ヘッダー | 2,048B / 4,096B / 8KiB | |
+| ETのmethod・URL・ヘッダー | 32B / 6,144B / 8KiB | |
 | `wake/ta/list`の`limit` | 1〜20 | |
 
 ---
@@ -1384,6 +1391,7 @@ ETの符号化はこの形式の検査だけを行い、どのパスに振り分
 - ETはHTTPのリクエスト・レスポンスの形式に従って符号化・復号する。内容の意味や用途、信頼性の判断には関与しない。ETの中のヘッダーはクライアントが自由に指定した値であり、リバースプロキシによる上書きや除去を受けない。どのヘッダーを信頼するかは実装者が決める。
 - 例えば`x-forwarded-for`、`forwarded`、`x-real-ip`、`host`を接続元やホストの判定に使うと、IP制限やログを偽装され得る。これらは外側のHTTP要求から得ることを勧める。
 - 利用者の判定には、`cookie`や`authorization`ではなく§11.5の認証情報を使うことを勧める。
+- ETで運ぶURLの解釈もWAKEの範囲外である（§11.5）。
 
 ### 14.3 レート制限
 
@@ -1467,14 +1475,14 @@ SELECT session_id, ?7, ?8, ?9, ...
 | code | 対象 |
 |---|---|
 | `bad_request` | LPや固定長フィールドの不正、ラベルの不一致、`MsgHeader`の不正、未定義のChallengeの組み合わせ、Transcriptのmodeとepochの不整合。ETの`EtRequest` / `EtResponse`構造不正には使わず、`invalid_request`とする（§11.6） |
-| `invalid_request` | ETの`EtRequest` / `EtResponse`構造不正（LP、ラベル、フィールド数/status）。ET queryの違反は`invalid_path`とする（§11.6） |
+| `invalid_request` | ETの`EtRequest` / `EtResponse`構造不正（LP、ラベル、フィールド数/status）。本文を持てない要求・応答の本文（§11.2）を含む（§11.6） |
 | `reauth` | AES-GCMの認証失敗（タグやAADの改ざん） |
 | `too_large` | 平文の長さの上限超過（§8.7） |
 | `invalid_base64url` | 正準形でないBase64url |
 | `invalid_utf8` | 不正なUTF-8 |
 | `invalid_public_key` | ECDH公開鍵の形式不正、曲線上にない点 |
 | `invalid_content` | 文面プロファイル（§10.4）の違反 |
-| `invalid_method` / `invalid_path` / `invalid_header` / `invalid_request` | ETの規則違反（§11.6） |
+| `invalid_method` / `invalid_url` / `invalid_header` / `invalid_request` | ETの規則違反（§11.6） |
 
 **正常系（必須）**
 
@@ -1501,7 +1509,7 @@ SELECT session_id, ?7, ?8, ?9, ...
 | `ta-profile` | NFCでない、LF、CR、タブ、DEL、C1制御文字、先頭・末尾の空白、空文字列 |
 | `msg` | 余分なバイト、固定長の不一致、ラベル不一致、`dir`の逆転、タグの改ざん、AADの1バイト改ざん、context外の文字 |
 | `challenge` | 未定義の組み合わせ |
-| `et` | 不正なパス・クエリ、単一値フィールドの重複、不正な`location`、CRLFを含む値 |
+| `et` | 不正なURL（フラグメント、URIに使えない文字、長さ超過）、禁止されたmethod、本文を持てない要求・応答の本文、CRLFを含む値 |
 
 ---
 

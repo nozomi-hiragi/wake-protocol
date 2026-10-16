@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/bytes",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Immutable byte values, fixed-width integers, and branded types for the WAKE protocol",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",

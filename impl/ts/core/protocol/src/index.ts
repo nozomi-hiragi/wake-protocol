@@ -127,16 +127,14 @@ export {
 } from "./ta/operation.ts";
 export {
   type EtHeader,
-  type EtMethod,
   type EtOptions,
   type EtRequest,
   type EtResponse,
   ET_BODY_MIN,
   ET_BODY_MAX,
   ET_HEADERS_MAX,
-  ET_METHODS,
-  ET_PATH_MAX,
-  ET_QUERY_MAX,
+  ET_METHOD_MAX,
+  ET_URL_MAX,
   ET_REQUEST_MAX_ENCODED,
   ET_RESPONSE_MAX_ENCODED,
   ET_REQ_LABEL,
@@ -144,8 +142,7 @@ export {
 } from "./et/types.ts";
 export {
   checkMethod,
-  checkPath,
-  checkQuery,
+  checkUrl,
   checkRequestHeaders,
   checkResponseHeaders,
   checkStatus,

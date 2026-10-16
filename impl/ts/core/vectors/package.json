@@ -13,9 +13,9 @@
     "vectors": "node --conditions=@wake-protocol/source scripts/generate-vectors.ts"
   },
   "dependencies": {
-    "@wake-protocol/core": "0.6.0",
-    "@wake-protocol/bytes": "0.6.0",
-    "@wake-protocol/codec": "0.6.0",
+    "@wake-protocol/core": "0.6.1",
+    "@wake-protocol/bytes": "0.6.1",
+    "@wake-protocol/codec": "0.6.1",
     "@scure/base": "2.4.0"
   }
 }

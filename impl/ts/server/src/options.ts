@@ -1,7 +1,6 @@
 // Spec §6.3, §13: server configuration and validation.
 import { DEFAULT_MAX_PLAINTEXT, ET_BODY_MAX, ET_BODY_MIN, ET_REQUEST_MAX_ENCODED, WakeError } from "@wake-protocol/core";
-import { checkRoutes } from "./et/transport.ts";
-import type { EtRoute } from "./et/types.ts";
+import type { EtHandler } from "./et/types.ts";
 import { MemoryWakeStore } from "./store/memory.ts";
 import type { CredentialStore, WakeStore } from "./store/types.ts";
 
@@ -34,10 +33,10 @@ export interface WakeServerOptions {
   idleTimeoutSec?: number;
   completedRetentionMs?: number;
   maxPlaintext?: number;
-  /** ET body limit (§11.2), at least ET_BODY_MIN bytes. With routes, maxPlaintext must cover the worst-case EtRequest for this limit. */
+  /** ET body limit (§11.2), at least ET_BODY_MIN bytes. With etHandler, maxPlaintext must cover the worst-case EtRequest for this limit. */
   etBodyLimit?: number;
-  /** In-process WAKE-ET routes (§11.5); none by default. */
-  routes?: readonly EtRoute[];
+  /** In-process WAKE-ET handler (§11.5); ET is disabled when omitted. */
+  etHandler?: EtHandler;
   maxAuthBody?: number;
   /**
    * Set to the maximum number of credentials a user can have. Users above this count and real credential ID length
@@ -51,7 +50,7 @@ export interface WakeServerOptions {
   onCounterAnomaly?: (event: CounterAnomaly) => void | Promise<void>;
 }
 
-export type ServerOptions = Required<Omit<WakeServerOptions, "onCounterAnomaly">> & Pick<WakeServerOptions, "onCounterAnomaly">;
+export type ServerOptions = Required<Omit<WakeServerOptions, "onCounterAnomaly" | "etHandler">> & Pick<WakeServerOptions, "onCounterAnomaly" | "etHandler">;
 
 const defaults = {
   exchangeTtlMs: 300_000,
@@ -155,9 +154,9 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
   ) {
     invalid();
   }
-  const routes = checkRoutes(options.routes);
-  // Routes enable ET: any EtRequest within the limits must fit in one message (§11.2, §8.1).
-  if (routes.length && values.maxPlaintext < ET_REQUEST_MAX_ENCODED - ET_BODY_MAX + values.etBodyLimit) {
+  if (options.etHandler !== undefined && typeof options.etHandler !== "function") invalid();
+  // The handler enables ET: any EtRequest within the limits must fit in one message (§11.2, §8.1).
+  if (options.etHandler !== undefined && values.maxPlaintext < ET_REQUEST_MAX_ENCODED - ET_BODY_MAX + values.etBodyLimit) {
     invalid();
   }
   if (options.store !== undefined && !hasMethods(options.store, [
@@ -194,7 +193,6 @@ export function checkOptions(options: WakeServerOptions): ServerOptions {
     ...values,
     loginOrigins: [...options.loginOrigins],
     taOrigins: [...options.taOrigins ?? options.loginOrigins],
-    routes,
     secret: options.secret.slice(),
     store: options.store ?? new MemoryWakeStore(values.completedRetentionMs, { now: options.now ?? Date.now }),
     now: options.now ?? Date.now,

@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/core",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "WAKE protocol core: KX, SM, ET, TA and KR messages, key schedule and errors",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
@@ -22,9 +22,9 @@
   },
   "dependencies": {
     "@nozomi-hiragi/i-json": "0.1.2",
-    "@wake-protocol/bytes": "0.6.0",
-    "@wake-protocol/codec": "0.6.0",
-    "@wake-protocol/crypto": "0.6.0",
+    "@wake-protocol/bytes": "0.6.1",
+    "@wake-protocol/codec": "0.6.1",
+    "@wake-protocol/crypto": "0.6.1",
     "@scure/base": "2.4.0"
   },
   "repository": {

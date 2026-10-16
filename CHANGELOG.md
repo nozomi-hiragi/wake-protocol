@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.1 (2026-10-17)
+
+- 仕様書を v0.6 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v05からの主な変更)）。WAKE-ET で URL を運び、その解釈を受信側に任せる。TypeScript のパッケージを 0.6.1 として公開
+- パッケージのバージョンの決め方を CONTRIBUTING.md に追加（`X.Y` は仕様書の版に揃え、実装だけの変更はパッチを上げる）
+- WAKE-ET の破壊的変更（仕様 §11）: `EtRequest` は `path` と `query` の代わりに、RFC 3986 の URI-reference を1つ持つ `url` を運ぶ。ワイヤー形式は `LP("WAKE/1 et-req", method, path, query, headers, body)` から `LP("WAKE/1 et-req", method, url, headers, body)` に変わり、旧形式とは互換性がない。`url` は絶対 URI（`wake://app/members`、`https://api.example.com/v1/items?id=1`）と相対参照（`/members?id=1`）のどちらでもよい。RFC 3986 の文法（付録 A）で検査し、6,144バイト以下、フラグメント（`#`）は含めない。空文字列は受け付ける。正規化はしない
+- WAKE-ET の破壊的変更: `method` は `GET` / `POST` / `PUT` / `PATCH` / `DELETE` の固定リストから、RFC 9110 の token（1〜32バイト、大文字・小文字を保つ）に変更。`CONNECT` / `TRACE` / `TRACK`（大文字・小文字を区別しない）は `invalid_method`。`GET` / `HEAD` の要求と、status が `204` / `205` / `304` の応答に空でない本文があれば `invalid_request`
+- WAKE-ET の破壊的変更: ヘッダーの `content-type` などの単一値フィールドの重複拒否、要求の `host` の複数行の拒否、`location` を同じオリジンの絶対パスに限る規則を廃止。名前・値の形式と 8KiB の上限は維持
+- WAKE-ET の破壊的変更: エラーコード `invalid_path` を `invalid_url` に改名。`route_not_found` を廃止。URL の解釈（スキーム・ホスト・パスによる振り分け、存在しない URL への応答、転送）は WAKE の範囲外になり、受信側のアプリケーションが決める
+- core の破壊的変更: `EtRequest` の `path` / `query` を `url` に置換。`ET_METHODS`、`EtMethod`（`method` は `string` になる）、`ET_PATH_MAX`、`ET_QUERY_MAX`、`checkPath`、`checkQuery` を削除し、`ET_METHOD_MAX`（32）、`ET_URL_MAX`（6,144）、`checkUrl` を追加。`ET_REQUEST_MAX_ENCODED` を1,128,491バイトから1,128,513バイトに、`DEFAULT_MAX_PLAINTEXT` も同じく1,128,513バイトに変更
+- server の破壊的変更: `createWakeServer({ routes: [{ method, path, handler }] })` を廃止し、`createWakeServer({ etHandler: (req, auth) => response })` に置換。ルートの照合はせず、形式の正しい要求をすべて `etHandler` に渡す。`etHandler` を指定しなければ ET は無効になり、`handle()` は `/wake/transport` に `null` を返す。型は `EtRoute` を削除し、`EtRouteRequest` → `EtHandlerRequest`（`{ method, url, headers, body }`）、`EtRouteResponse` → `EtHandlerResponse` に改名し、`EtHandler` を追加。`maxPlaintext` が最悪の `EtRequest` を覆うかの検査は、`etHandler` を指定したときに行う
+- client の破壊的変更: `wakeFetch(path, { query })` を `wakeFetch(url)` に変更。`url` は絶対 URI でも相対参照でもよく、解決や分割をせずにそのまま送る。`WakeFetchInit` の `query` を削除し、`method` は `string` に変更
+- demo: ET のルート登録を、自分で振り分ける1つの `etHandler` に置き換えた。未知の URL にはアプリ自身の `404 {"error":{"code":"not_found"}}` を返す
+- §16 の `et` のテストベクターを新しい形式で再生成し、URL・method・本文を持てない要求と応答の負例を追加
+
 ## v0.6.0 (2026-10-16)
 
 - TypeScript 仮実装の 6 パッケージを、バージョン 0.6.0 で npm / JSR に公開するためのビルド、配布物・バージョンの検査、CI と公開ワークフローを追加。vectors / demo とテスト専用の `./testing` は公開対象に含めない
@@ -51,13 +65,13 @@
 - M2 で見つかった仕様の論点（公開鍵を SPKI で保存、署名カウンターの更新の原子性、期限の境界など）を `impl/ts/SPEC-NOTES.md` に記録
 - 仕様: `/auth/start` の応答に `serverTime` を追加（§7.2）。クライアントは `/auth/complete` の再送の期限を `expiresAt − serverTime` から端末の時刻で求める（§7.7）。端末の時計がずれていると、`/auth/complete` を1回も送らずに失敗していたため
 - core に、受け取った JSON と Base64url の項目を検査する `parseJsonObject` / `decodeBase64urlField` を追加し、server と client で共有
-- 仕様書を v0.5 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v04からの主な変更)）。TA文面のプロファイル簡素化、ETの責任範囲の整理、テストベクターのエラーコード定義など
+- 仕様書を v0.5 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#01-v04からv05への主な変更)）。TA文面のプロファイル簡素化、ETの責任範囲の整理、テストベクターのエラーコード定義など
 - TypeScript の仮実装のフォルダを `impl/ts/{core,client,server,demo}` に整理。共通の `bytes` / `codec` / `crypto` / `vectors` と WAKE 本体（`core/protocol`、パッケージ名は `@wake-protocol/core` のまま）は `core/` の下に置く。パッケージ名と API は変更なし
 - コーデック API の破壊的変更: `parseIJson` を削除。旧 `parseIJson(text)` と同等の検査を行うには core の `parseJsonObject` を使う（UTF-8 のバイト列とエラーコードを受け取り、トップレベルはオブジェクトに限る）。`@nozomi-hiragi/i-json` の `parse` を直接呼ぶ場合は `{ strict: true, maxDepth: 64 }` を指定し、値全体をたどって絶対値が 2⁵³ 以上の整数を別途拒否する。非文字と、倍精度で表せない精度の小数は拒否する
 
 ## v0.4.0 (2026-10-10)
 
-v0.3 からの主な変更は [仕様書 §0.1](spec/wake-protocol.md#01-v03からv04への主な変更) を参照してください。
+v0.3 からの主な変更は [仕様書 §0.1](spec/wake-protocol.md#02-v03からv04への主な変更) を参照してください。
 
 ## v0.3（2026-10-09、タグなし）
 

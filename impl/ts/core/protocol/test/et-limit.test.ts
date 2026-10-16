@@ -9,7 +9,7 @@ import {
   type EtRequest,
 } from "../src/index.ts";
 
-const req: EtRequest = { method: "POST", path: "/api/limit", query: "", headers: [], body: new Bytes(new Uint8Array(4)) };
+const req: EtRequest = { method: "POST", url: "/api/limit", headers: [], body: new Bytes(new Uint8Array(4)) };
 const isInvalidOption = (e: unknown) => e instanceof WakeError && e.code === "invalid_option";
 
 describe("bodyLimit validation (§11.2)", () => {

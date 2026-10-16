@@ -16,7 +16,7 @@ const MIN_HEADER = 116;
 const MAX_HEADER = 371;
 
 /** Default plaintext limit (§8.7), covering the worst-case ET encodings with default limits. */
-export const DEFAULT_MAX_PLAINTEXT = 1_128_491;
+export const DEFAULT_MAX_PLAINTEXT = 1_128_513;
 
 export interface MsgOptions {
   /** Maximum plaintext length in bytes. Defaults to DEFAULT_MAX_PLAINTEXT. */

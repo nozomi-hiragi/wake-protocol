@@ -255,8 +255,17 @@ test("ET: invalid input, unknown routes and other users' operations", async () =
   const { client } = f.alice;
   const unknown = await client.wakeFetch("/api/nothing");
   assert.equal(unknown.status, 404);
+  assert.deepEqual(await unknown.json(), { error: { code: "not_found" } });
   const wrongMethod = await client.wakeFetch("/api/me", { method: "POST" });
   assert.equal(wrongMethod.status, 404);
+  assert.deepEqual(await wrongMethod.json(), { error: { code: "not_found" } });
+  const absolute = await client.wakeFetch("wake://demo/api/me");
+  assert.equal(absolute.status, 200);
+  for (const url of ["https://other.example/api/me", "wake://other/api/me"]) {
+    const otherHost = await client.wakeFetch(url);
+    assert.equal(otherHost.status, 404);
+    assert.deepEqual(await otherHost.json(), { error: { code: "not_found" } });
+  }
   const post = (body: string) =>
     client.wakeFetch("/api/operations", { method: "POST", headers: { "content-type": "application/json" }, body });
   for (const bad of ["not json", "[]", "{}", '{"content":1}', '{"content":"ok","unsafe":9007199254740992.0}']) {
@@ -297,5 +306,19 @@ test("ET is not reachable as plain HTTP, and the Host check and CSP still apply"
   assert.doesNotMatch(await page.text(), /<script(?![^>]*\bsrc=)/u);
   for (const bad of ["abc", "A".repeat(64), "0".repeat(63)]) {
     assert.equal((await f.demo.app.fetch(new Request(`${ORIGIN}/approve/${bad}`))).status, 404);
+  }
+});
+
+test("ET: demo routing matches the pathname and only operation lookup interprets the query", async () => {
+  const { alice: { client } } = await setup();
+  for (const url of ["/api/me?ignored=1", "wake://demo/api/me?ignored=1"]) {
+    const res = await client.wakeFetch(url);
+    assert.equal(res.status, 200);
+    assert.ok((await res.json() as { userId: string }).userId);
+  }
+  for (const url of ["/api/me/", "/api/ME", "/api/%6de", "/wake/up"]) {
+    const res = await client.wakeFetch(url);
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: { code: "not_found" } });
   }
 });

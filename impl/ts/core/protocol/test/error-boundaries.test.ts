@@ -57,7 +57,7 @@ test("decoder option errors outside generic codecs propagate unchanged", () => {
   const error = new TypeError("local option access failed");
   const msgOpts: MsgOptions = { get maxPlaintext(): number { throw error; } };
   const etOpts: EtOptions = { get bodyLimit(): number { throw error; } };
-  const request = encodeEtRequest({ method: "GET", path: "/", query: "", headers: [], body: new Bytes([]) });
+  const request = encodeEtRequest({ method: "GET", url: "/", headers: [], body: new Bytes([]) });
   const response = encodeEtResponse({ status: 200, headers: [], body: new Bytes([]) });
   assert.throws(() => parseWire(frame(encodeHeader(header())), msgOpts), (e: unknown) => e === error);
   assert.throws(() => decodeEtRequest(request, etOpts), (e: unknown) => e === error);

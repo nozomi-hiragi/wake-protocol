@@ -2,7 +2,6 @@
 import { hex, base64urlnopad } from "@scure/base";
 import {
   type EtHeader,
-  type EtMethod,
   type MsgHeader,
   type ServerFinishedInput,
   WakeError,
@@ -308,9 +307,8 @@ export async function runCase(suite: string, o: Obj): Promise<Obj> {
     case "et": {
       if (o.kind === "request") {
         const enc = encodeEtRequest({
-          method: str(o, "method") as EtMethod,
-          path: str(o, "path"),
-          query: str(o, "query"),
+          method: str(o, "method"),
+          url: str(o, "url"),
           headers: headersOf(o, "headers"),
           body: bytes(o, "body"),
         });

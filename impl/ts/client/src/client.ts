@@ -45,7 +45,6 @@ import {
 } from "@wake-protocol/core";
 import type {
   EtHeader,
-  EtMethod,
   SessionId,
   RequestId,
   C2sCryptoKey,
@@ -174,8 +173,6 @@ const ROTATION_REJECTION_CODES = new Set([
   "rate_limited", "retry", "epoch_retired",
 ]);
 const EMPTY_JSON = utf8ToBytes("{}");
-// Fetch null-body statuses: `new Response(bytes, { status })` throws for these when given a body.
-const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 function encodeBinary(bytes: Bytes): string {
   return base64urlnopad.encode(bytes.toUint8Array());
@@ -293,9 +290,7 @@ type LoginRequest = { mode: "discoverable" } | {
 };
 
 export interface WakeFetchInit {
-  method?: EtMethod;
-  /** Query string without "?". If omitted, a "?query" suffix of the path is used. Passing both is an error. */
-  query?: string;
+  method?: string;
   headers?: readonly (readonly [string, string])[] | Record<string, string>;
   body?: Uint8Array | string;
 }
@@ -1121,26 +1116,17 @@ export class WakeClient {
 
   /**
    * §11 WAKE-ET: sends one HTTP-like request through POST /wake/transport and returns the tunnelled response.
-   * `path` may carry a query as "path?query"; it is split at the first "?" (an empty query after "?" is allowed).
-   * Validation errors are thrown before anything is sent. A string body is UTF-8 encoded. Routing errors from the
-   * server arrive as ordinary EtResponses (e.g. 404) and are returned, not thrown.
-   * For 204/205/304 any ET body is not exposed through Response (the Fetch null-body statuses).
+   * The URI-reference is sent unchanged. Validation errors are thrown before anything is sent.
+   * A string body is UTF-8 encoded. Application error responses are returned as ordinary Responses.
    */
-  async wakeFetch(path: string, init: WakeFetchInit = {}): Promise<Response> {
-    const split = path.indexOf("?");
-    const rawPath = split < 0 ? path : path.slice(0, split);
-    const query = init.query ?? (split < 0 ? "" : path.slice(split + 1));
-    if (init.query !== undefined && split >= 0) {
-      throw new WakeError("invalid_path");
-    }
+  async wakeFetch(url: string, init: WakeFetchInit = {}): Promise<Response> {
     const headers: EtHeader[] = init.headers === undefined ? [] : Array.isArray(init.headers)
       ? (init.headers as readonly EtHeader[]).map(([n, v]) => [n, v] as const)
       : Object.entries(init.headers as Record<string, string>);
     const body = typeof init.body === "string" ? utf8ToBytes(init.body) : init.body ?? new Uint8Array(0);
     const encoded = encodeEtRequest({
       method: init.method ?? "GET",
-      path: rawPath,
-      query,
+      url,
       headers,
       body: new Bytes(body),
     }, { bodyLimit: this.#etBodyLimit });
@@ -1150,7 +1136,7 @@ export class WakeClient {
     for (const [name, value] of et.headers) {
       out.append(name, value);
     }
-    return new Response(et.body.length === 0 || NULL_BODY_STATUSES.has(et.status) ? null : new Uint8Array(et.body.toUint8Array()), {
+    return new Response(et.body.length === 0 ? null : new Uint8Array(et.body.toUint8Array()), {
       status: et.status,
       headers: out,
     });

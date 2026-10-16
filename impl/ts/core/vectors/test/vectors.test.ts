@@ -52,8 +52,7 @@ describe("spec/test-vectors", () => {
             if (v.input.kind === "request") {
               const r = decodeEtRequest(enc);
               assert.equal(r.method, v.input.method);
-              assert.equal(r.path, v.input.path);
-              assert.equal(r.query, v.input.query);
+              assert.equal(r.url, v.input.url);
               assert.equal(hex.encode(r.body.toUint8Array()), v.input.body);
               assert.deepEqual(r.headers, v.input.headers);
             } else {

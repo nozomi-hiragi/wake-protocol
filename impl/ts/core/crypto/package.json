@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/crypto",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Web Crypto API wrappers (SHA-256, HMAC, HKDF, AES-256-GCM, P-256) for the WAKE protocol",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",

@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/server",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Framework-agnostic WAKE protocol server (KX, SM, KR, TA, ET) built on Request and Response",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
@@ -21,10 +21,10 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@wake-protocol/core": "0.6.0",
-    "@wake-protocol/bytes": "0.6.0",
-    "@wake-protocol/codec": "0.6.0",
-    "@wake-protocol/crypto": "0.6.0",
+    "@wake-protocol/core": "0.6.1",
+    "@wake-protocol/bytes": "0.6.1",
+    "@wake-protocol/codec": "0.6.1",
+    "@wake-protocol/crypto": "0.6.1",
     "@scure/base": "2.4.0"
   },
   "repository": {

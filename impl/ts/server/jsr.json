@@ -1,11 +1,11 @@
 {
   "name": "@wake-protocol/server",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "imports": {
-    "@wake-protocol/core": "jsr:@wake-protocol/core@0.6.0",
-    "@wake-protocol/bytes": "jsr:@wake-protocol/bytes@0.6.0",
-    "@wake-protocol/codec": "jsr:@wake-protocol/codec@0.6.0",
-    "@wake-protocol/crypto": "jsr:@wake-protocol/crypto@0.6.0",
+    "@wake-protocol/core": "jsr:@wake-protocol/core@0.6.1",
+    "@wake-protocol/bytes": "jsr:@wake-protocol/bytes@0.6.1",
+    "@wake-protocol/codec": "jsr:@wake-protocol/codec@0.6.1",
+    "@wake-protocol/crypto": "jsr:@wake-protocol/crypto@0.6.1",
     "@scure/base": "jsr:@scure/base@2.4.0"
   },
   "exports": "./src/index.ts",
