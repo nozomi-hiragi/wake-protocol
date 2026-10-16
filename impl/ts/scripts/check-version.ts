@@ -106,11 +106,12 @@ export function checkVersions(root: string, expectedTag?: string): CheckResult {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const { errors, version } = checkVersions(fileURLToPath(new URL("..", import.meta.url)), process.argv[2]);
+  const printVersion = process.argv[2] === "--print-version";
+  const { errors, version } = checkVersions(fileURLToPath(new URL("..", import.meta.url)), printVersion ? undefined : process.argv[2]);
   if (errors.length) {
     console.error(errors.join("\n"));
     process.exitCode = 1;
   } else {
-    console.log(`Version check passed (version: ${version})`);
+    console.log(printVersion ? version : `Version check passed (version: ${version})`);
   }
 }
