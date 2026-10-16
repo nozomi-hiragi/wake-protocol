@@ -10,7 +10,7 @@ WebAuthnでユーザーを認証すると同時に一時ECDH鍵交換を認証�
 
 ## 仕様書
 
-- [WAKE Protocol 仕様書](spec/wake-protocol.md)（設計ドラフト v0.5、2026-10-10）
+- [WAKE Protocol 仕様書](spec/wake-protocol.md)（設計ドラフト v0.5、2026-10-16）
 - 版ごとの変更点は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 
 ## 特徴
@@ -78,7 +78,7 @@ WAKEは次のものを防ぎません。詳しくは仕様書の「責任範囲�
 
 - [x] 設計ドラフト v0.5
 - [x] テストベクター（[spec/test-vectors](spec/test-vectors/)）
-- [ ] 仮実装（[impl/ts](impl/ts/)、TypeScript / Web Crypto API）: 暗号コアまで完了。次はブラウザとサーバーでのログインと暗号化通信
+- [ ] 仮実装（[impl/ts](impl/ts/)、TypeScript / Web Crypto API）: KX、SM、KR、TA、ET のクライアント・サーバーとデモまで完了。次は npm / JSR での公開
 - [ ] 第三者による暗号プロトコルレビュー
 - [ ] 実装ノート（Cloudflare Workers / D1 / Durable Objects）
 
