@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/codec",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Length-prefixed codec and text (ASCII/Latin-1/UTF-8) utilities for the WAKE protocol",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",

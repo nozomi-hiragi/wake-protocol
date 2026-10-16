@@ -1,8 +1,8 @@
 # Changelog
 
-## 未リリース
+## v0.6.1 (2026-10-17)
 
-- 仕様書を v0.6 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v05からの主な変更)）。WAKE-ET で URL を運び、その解釈を受信側に任せる。TypeScript のパッケージは 0.6.1 として公開する予定
+- 仕様書を v0.6 に更新（変更点は [仕様書 §0](spec/wake-protocol.md#0-v05からの主な変更)）。WAKE-ET で URL を運び、その解釈を受信側に任せる。TypeScript のパッケージを 0.6.1 として公開
 - パッケージのバージョンの決め方を CONTRIBUTING.md に追加（`X.Y` は仕様書の版に揃え、実装だけの変更はパッチを上げる）
 - WAKE-ET の破壊的変更（仕様 §11）: `EtRequest` は `path` と `query` の代わりに、RFC 3986 の URI-reference を1つ持つ `url` を運ぶ。ワイヤー形式は `LP("WAKE/1 et-req", method, path, query, headers, body)` から `LP("WAKE/1 et-req", method, url, headers, body)` に変わり、旧形式とは互換性がない。`url` は絶対 URI（`wake://app/members`、`https://api.example.com/v1/items?id=1`）と相対参照（`/members?id=1`）のどちらでもよい。RFC 3986 の文法（付録 A）で検査し、6,144バイト以下、フラグメント（`#`）は含めない。空文字列は受け付ける。正規化はしない
 - WAKE-ET の破壊的変更: `method` は `GET` / `POST` / `PUT` / `PATCH` / `DELETE` の固定リストから、RFC 9110 の token（1〜32バイト、大文字・小文字を保つ）に変更。`CONNECT` / `TRACE` / `TRACK`（大文字・小文字を区別しない）は `invalid_method`。`GET` / `HEAD` の要求と、status が `204` / `205` / `304` の応答に空でない本文があれば `invalid_request`

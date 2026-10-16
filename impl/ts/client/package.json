@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/client",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "WAKE protocol client (KX, SM, KR, TA, ET) for browsers and Node.js",
   "keywords": ["wake-protocol", "webauthn", "passkey"],
   "license": "Apache-2.0",
@@ -18,9 +18,9 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@wake-protocol/core": "0.6.0",
-    "@wake-protocol/bytes": "0.6.0",
-    "@wake-protocol/codec": "0.6.0",
+    "@wake-protocol/core": "0.6.1",
+    "@wake-protocol/bytes": "0.6.1",
+    "@wake-protocol/codec": "0.6.1",
     "@scure/base": "2.4.0"
   },
   "repository": {

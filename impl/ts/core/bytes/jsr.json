@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/bytes",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "exports": "./src/index.ts",
   "publish": {
     "include": ["src", "README.md", "LICENSE"],

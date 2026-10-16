@@ -1,6 +1,6 @@
 {
   "name": "@wake-protocol/crypto",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "imports": {
     "@scure/base": "jsr:@scure/base@2.4.0"
   },
