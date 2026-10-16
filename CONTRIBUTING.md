@@ -113,4 +113,4 @@ pull_request と main へのプッシュで、`impl/ts/**`、`spec/**`、CI ワ�
 2. **npm**: `wake-protocol` org を作成し、公開できる granular access token を `NPM_TOKEN` として `npm-jsr` 環境のシークレットに登録します。npm の trusted publisher は既存のパッケージにしか設定できないため、初回だけトークンで公開します
 3. **JSR**: `@wake-protocol` スコープと 6 パッケージを作成し、各パッケージの設定で GitHub リポジトリ `nozomi-hiragi/wake-protocol` をリンクします（[JSR の手順](https://jsr.io/docs/publishing-packages#publishing-from-github-actions)）
 4. タグを push して公開します
-5. 公開後、npmjs.com の各パッケージで trusted publisher を設定し（リポジトリ `nozomi-hiragi/wake-protocol`、ワークフロー `ts-publish.yml`、環境 `npm-jsr`。[npm の手順](https://docs.npmjs.com/trusted-publishers/)）、`NPM_TOKEN` を削除してトークンも失効させます。以後は OIDC だけで公開します
+5. 公開後、npmjs.com の各パッケージで trusted publisher を設定し（リポジトリ `nozomi-hiragi/wake-protocol`、ワークフロー `ts-publish.yml`、環境 `npm-jsr`。[npm の手順](https://docs.npmjs.com/trusted-publishers/)）、Allowed actions で `npm publish` による直接の公開も許可してから（2026-09-03 以降に作る設定は、既定では `npm stage publish` しか許可されません）、`NPM_TOKEN` を削除してトークンも失効させます。以後は OIDC だけで公開します
