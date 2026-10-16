@@ -74,6 +74,8 @@ git status --short ../../spec         # 意図した変更がなければ空
 
 ## リリース（npm / JSR）
 
+リリースは、バージョンを揃えて CHANGELOG の見出しに日付を入れた PR を `main` にマージして行います。マージ後、npm / JSR への公開とタグ・GitHub Release の作成が自動で進みます。
+
 ### バンプ手順
 
 以下のコマンドは `impl/ts` で実行します。
@@ -83,7 +85,7 @@ git status --short ../../spec         # 意図した変更がなければ空
 3. `npm install` を実行して `package-lock.json` を更新する
 4. `node scripts/check-version.ts` を実行して整合性を確認する
 5. CHANGELOG.md の未リリース節の見出しを更新する（例: `## v0.6.0（未リリース）` → `## v0.6.0 (YYYY-MM-DD)`。日付は公開日）
-6. タグを打って push する（例: `impl/ts/v0.6.0`）
+6. 上記の変更を PR にまとめ、確認とレビューを通して `main` にマージする。タグはワークフローが作成するので、手動では作らない
 
 ### タグ名の形式
 
@@ -97,20 +99,25 @@ pull_request と main へのプッシュで、`impl/ts/**`、`spec/**`、CI ワ�
 
 ### 公開ワークフロー（`.github/workflows/ts-publish.yml`）
 
-`impl/ts/v*` タグの push で起動します。環境名は `npm-jsr`（GitHub Environments）、Node は 24、npm は 11.5.1 以降を使います。
+`main` への push で、`impl/ts/**`、`CHANGELOG.md`、公開ワークフロー自身に変更があると起動します。手動の `workflow_dispatch` でも再実行できます。環境名は `npm-jsr`（GitHub Environments）、Node は 24、npm は 11.5.1 以降を使います。公開処理は同時に1つだけ実行します。
 
-- 同じ確認を行い、タグのバージョンとパッケージバージョンを照合してから公開します
+- `plan` ジョブがパッケージのバージョンを検査し、対応するタグが origin にあるか調べます。現在のバージョンのタグがすでにあれば、通常の `main` へのマージでも公開処理は何もしません
+- タグがなければ、`npm-jsr` 環境の承認を経て `publish` ジョブが進みます。Required reviewers を設定し、公開の前に承認を求める運用を推奨します
+- CI と同じ確認に加え、作成するタグのバージョンとの照合と CHANGELOG の検査を行います。見出しは `## vX.Y.Z (YYYY-MM-DD)` と完全に一致し、実在する日付である必要があります。未リリースの見出しのままでは公開前に失敗します
 - npm: trusted publisher（OIDC）で公開し、provenance を付けます。`NPM_TOKEN` があれば、trusted publisher が未設定のパッケージ（初回）はトークンで公開します。すでに公開されたバージョンはスキップします。`0.6.0` のような通常のバージョンを `latest` dist-tag で公開し、`-alpha` は付けません
 - JSR: OIDC で公開。JSR はすでに公開済みのバージョンをスキップします
+- 両方への公開後、実行対象のコミット（`github.sha`）に `impl/ts/vX.Y.Z` タグを作成し、CHANGELOG の該当節を本文にした GitHub Release を作成します。再実行で同じコミットのタグや Release があれば再作成しません。タグが別のコミットを指していれば失敗します
 
 1.0 未満の GitHub Release は、既存の v0.4.0 / v0.5.0 と同じく **Pre-release** にします。これは npm の dist-tag とは別の設定です。
 
+一部のパッケージの公開後に失敗した場合は、Actions → Publish TypeScript packages → Run workflow から `main` を選び、再実行します。公開済みのバージョンはスキップして続行します。タグの作成後に Release の作成だけが失敗した場合は、元の実行の失敗したジョブを再実行します（新しい実行では既存タグのため `publish` がスキップされます）。
+
 ### 初回のセットアップ
 
-最初のタグを push する前に、一度だけ行います。
+最初のリリース用 PR をマージする前に、一度だけ行います。
 
-1. **GitHub**: `npm-jsr` 環境を作成します（必要なら Required reviewers を設定して、公開の前に承認を求めます）
+1. **GitHub**: `npm-jsr` 環境を作成します。Required reviewers を設定し、公開の前に承認を求める運用を推奨します
 2. **npm**: `wake-protocol` org を作成し、公開できる granular access token を `NPM_TOKEN` として `npm-jsr` 環境のシークレットに登録します。npm の trusted publisher は既存のパッケージにしか設定できないため、初回だけトークンで公開します
 3. **JSR**: `@wake-protocol` スコープと 6 パッケージを作成し、各パッケージの設定で GitHub リポジトリ `nozomi-hiragi/wake-protocol` をリンクします（[JSR の手順](https://jsr.io/docs/publishing-packages#publishing-from-github-actions)）
-4. タグを push して公開します
+4. バージョンを揃え、CHANGELOG の見出しを日付入りにしたリリース用 PR を `main` にマージして公開します
 5. 公開後、npmjs.com の各パッケージで trusted publisher を設定し（リポジトリ `nozomi-hiragi/wake-protocol`、ワークフロー `ts-publish.yml`、環境 `npm-jsr`。[npm の手順](https://docs.npmjs.com/trusted-publishers/)）、Allowed actions で `npm publish` による直接の公開も許可してから（2026-09-03 以降に作る設定は、既定では `npm stage publish` しか許可されません）、`NPM_TOKEN` を削除してトークンも失効させます。以後は OIDC だけで公開します

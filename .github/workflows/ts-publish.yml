@@ -2,18 +2,66 @@ name: Publish TypeScript packages
 
 on:
   push:
-    tags: ['impl/ts/v*']
+    branches: [main]
+    paths:
+      - 'impl/ts/**'
+      - 'CHANGELOG.md'
+      - '.github/workflows/ts-publish.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ts-publish
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    defaults:
+      run:
+        working-directory: impl/ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Plan release
+        id: plan
+        run: |
+          version="$(node --conditions=@wake-protocol/source scripts/check-version.ts --print-version)"
+          tag="impl/ts/v$version"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/$tag")"
+          release=true
+          if [[ -n "$remote_tag" ]]; then
+            release=false
+            echo "Skipping $tag (tag already exists on origin)"
+          fi
+          {
+            echo "release=$release"
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
   publish:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     environment: npm-jsr
     permissions:
-      contents: read
+      contents: write
       id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
     defaults:
       run:
         working-directory: impl/ts
@@ -45,7 +93,9 @@ jobs:
       - run: npm run check-pack
       - run: npx --yes jsr@0.14.3 publish --dry-run
       - name: Verify release tag
-        run: node --conditions=@wake-protocol/source scripts/check-version.ts "$GITHUB_REF_NAME"
+        run: node --conditions=@wake-protocol/source scripts/check-version.ts "$RELEASE_TAG"
+      - name: Prepare release notes
+        run: node scripts/changelog.ts "$RELEASE_VERSION" "$RUNNER_TEMP/ts-release-notes.md"
       - name: Publish to npm
         env:
           # npm tries trusted publishing (OIDC) first and falls back to this token when
@@ -54,3 +104,25 @@ jobs:
         run: bash scripts/publish-npm.sh
       - name: Publish to JSR
         run: npx --yes jsr@0.14.3 publish
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          remote_tags="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          if [[ -n "$remote_tags" ]]; then
+            tag_commit="$(awk 'NR == 1 { commit = $1 } /\^\{\}$/ { commit = $1 } END { print commit }' <<< "$remote_tags")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Tag $RELEASE_TAG points to $tag_commit, expected $GITHUB_SHA" >&2
+              exit 1
+            fi
+          fi
+          releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')"
+          if grep -Fxq -- "$RELEASE_TAG" <<< "$releases"; then
+            echo "Skipping $RELEASE_TAG (GitHub Release already exists)"
+            exit 0
+          fi
+          args=("$RELEASE_TAG" --target "$GITHUB_SHA" --title "impl/ts v$RELEASE_VERSION" --notes-file "$RUNNER_TEMP/ts-release-notes.md")
+          if [[ "${RELEASE_VERSION%%.*}" == 0 ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"

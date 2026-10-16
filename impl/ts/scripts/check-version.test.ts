@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -44,6 +45,20 @@ test("consistent versions and exact tag pass", (t) => {
   const root = fixture(t);
   assert.deepEqual(checkVersions(root, "impl/ts/v0.6.0"), { version: "0.6.0", errors: [] });
 });
+for (const valid of [true, false]) {
+  test(`--print-version ${valid ? "prints only a checked version" : "fails on inconsistent versions without stdout"}`, (t) => {
+    const root = fixture(t);
+    patch(root, "package.json", { type: "module" });
+    mkdirSync(join(root, "scripts"));
+    const script = join(root, "scripts/check-version.ts");
+    copyFileSync(new URL("./check-version.ts", import.meta.url), script);
+    if (!valid) patch(root, "server/jsr.json", { version: "0.5.0" });
+    const result = spawnSync(process.execPath, [realpathSync(script), "--print-version"], { encoding: "utf8" });
+    assert.equal(result.status, valid ? 0 : 1, result.stderr);
+    assert.equal(result.stdout, valid ? "0.6.0\n" : "");
+    if (!valid) assert.match(result.stderr, /Version mismatch/);
+  });
+}
 for (const file of ["core/bytes/package.json", "server/jsr.json"]) {
   test(`mismatched version in ${file} fails`, (t) => {
     const root = fixture(t);
